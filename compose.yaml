@@ -1,0 +1,23 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: graphops-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: graphops_root
+      MYSQL_DATABASE: graphops
+      MYSQL_USER: graphops
+      MYSQL_PASSWORD: graphops
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pgraphops_root"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - graphops-mysql-data:/var/lib/mysql
+
+volumes:
+  graphops-mysql-data:

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.exe
+*.out
+coverage.out
+bin/
+logs/
+.pytest_cache/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.egg-info/
+orchestrator/data/
