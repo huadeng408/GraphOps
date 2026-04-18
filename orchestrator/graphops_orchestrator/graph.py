@@ -21,6 +21,12 @@ from graphops_orchestrator.models import (
     VerificationResult,
 )
 from graphops_orchestrator.prompts import PROMPT_VERSIONS
+from graphops_orchestrator.telemetry import (
+    approval_wait_duration_seconds,
+    graph_node_duration_seconds,
+    incident_runs_total,
+    measure_span,
+)
 
 
 class GraphState(TypedDict, total=False):
@@ -57,6 +63,7 @@ class GraphRunner:
         ops_client: Any | None = None,
         checkpointer: Any | None = None,
         reasoner: BaseReasoner | None = None,
+        runtime_coordinator: Any | None = None,
     ) -> None:
         if incident_client is None:
             if incident_api_url is None:
@@ -70,38 +77,55 @@ class GraphRunner:
         self.incident_client = incident_client
         self.ops_client = ops_client
         self.reasoner = reasoner or build_reasoner_from_env()
+        self.runtime_coordinator = runtime_coordinator
         self.graph = self._build_graph(checkpointer or MemorySaver())
 
     async def run(self, incident_id: str) -> RunResponse:
-        config = self._config(incident_id)
-        result = await self.graph.ainvoke({"incident_id": incident_id}, config)
-        snapshot = await self.graph.aget_state(config)
-        return self._to_run_response(incident_id, result, snapshot.values, snapshot.interrupts)
+        async with self._hold_run_lock(incident_id):
+            config = self._config(incident_id)
+            result = await self.graph.ainvoke({"incident_id": incident_id}, config)
+            snapshot = await self.graph.aget_state(config)
+            return self._to_run_response(incident_id, result, snapshot.values, snapshot.interrupts)
 
     async def resume(self, incident_id: str, approved: bool, reviewer: str, comment: str) -> RunResponse:
-        if approved:
-            await self.incident_client.approve(incident_id, reviewer, comment)
-        else:
-            await self.incident_client.reject(incident_id, reviewer, comment)
+        async with self._hold_run_lock(incident_id):
+            if approved:
+                await self.incident_client.approve(incident_id, reviewer, comment)
+            else:
+                await self.incident_client.reject(incident_id, reviewer, comment)
 
-        await self._record_event(
-            incident_id,
-            event_type="approval_reviewed",
-            actor_type="human",
-            actor_name=reviewer,
-            payload={"approved": approved, "comment": comment},
-        )
+            await self._record_event(
+                incident_id,
+                event_type="approval_reviewed",
+                actor_type="human",
+                actor_name=reviewer,
+                payload={"approved": approved, "comment": comment},
+            )
 
-        config = self._config(incident_id)
-        result = await self.graph.ainvoke(
-            Command(resume={"approved": approved, "reviewer": reviewer, "comment": comment}),
-            config,
-        )
-        snapshot = await self.graph.aget_state(config)
-        return self._to_run_response(incident_id, result, snapshot.values, snapshot.interrupts)
+            config = self._config(incident_id)
+            result = await self.graph.ainvoke(
+                Command(resume={"approved": approved, "reviewer": reviewer, "comment": comment}),
+                config,
+            )
+            snapshot = await self.graph.aget_state(config)
+            return self._to_run_response(incident_id, result, snapshot.values, snapshot.interrupts)
 
     def _config(self, incident_id: str) -> dict[str, Any]:
         return {"configurable": {"thread_id": incident_id}}
+
+    def _scenario_type(self, values: dict[str, Any]) -> str:
+        triage_decision = values.get("triage_decision") or {}
+        return triage_decision.get("incident_type") or values.get("scenario_key", "unknown")
+
+    def _record_run_metric(self, values: dict[str, Any], interrupt_payload: dict[str, Any] | None) -> str:
+        status = determine_status(values, interrupt_payload)
+        incident_runs_total.labels(status, self._scenario_type(values)).inc()
+        return status
+
+    def _hold_run_lock(self, incident_id: str):
+        if self.runtime_coordinator is None:
+            return _NullAsyncContextManager()
+        return self.runtime_coordinator.hold_run_lock(incident_id)
 
     async def _record_event(
         self,
@@ -168,8 +192,10 @@ class GraphRunner:
             payload={"prompt_version": prompt_version},
         )
         try:
-            output = await fn()
+            with measure_span("graph_node", node_name=node_name):
+                output = await fn()
             latency_ms = int((time.perf_counter() - started) * 1000)
+            graph_node_duration_seconds.labels(node_name, "ok").observe(time.perf_counter() - started)
             await self._record_agent_run(
                 incident_id,
                 node_name=node_name,
@@ -189,6 +215,7 @@ class GraphRunner:
             return output
         except Exception as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
+            graph_node_duration_seconds.labels(node_name, "error").observe(time.perf_counter() - started)
             await self._record_agent_run(
                 incident_id,
                 node_name=node_name,
@@ -436,6 +463,7 @@ class GraphRunner:
             return {"policy_decision": decision.model_dump()}
 
         async def approval_gate(state: GraphState) -> GraphState:
+            started = time.perf_counter()
             decision = interrupt(
                 {
                     "incident_id": state["incident_id"],
@@ -444,6 +472,7 @@ class GraphRunner:
                     "policy_decision": state.get("policy_decision"),
                 }
             )
+            approval_wait_duration_seconds.observe(time.perf_counter() - started)
             return {
                 "approval_status": "approved" if decision["approved"] else "rejected",
                 "approval_reviewer": decision["reviewer"],
@@ -583,7 +612,7 @@ class GraphRunner:
 
         return RunResponse(
             incident_id=incident_id,
-            status=determine_status(values, interrupt_payload),
+            status=self._record_run_metric(values, interrupt_payload),
             hypotheses=[Hypothesis.model_validate(item) for item in values.get("hypotheses", [])],
             proposed_action=(
                 ActionPlan.model_validate(values["proposed_action"])
@@ -610,6 +639,14 @@ class GraphRunner:
             policy_decision=values.get("policy_decision"),
             interrupt=interrupt_payload,
         )
+
+
+class _NullAsyncContextManager:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
 def route_after_critic(state: GraphState) -> str:
     verdict = state.get("critic_verdict") or {}
     if verdict.get("decision") == "request_replan" and state.get("replan_count", 0) <= 1:

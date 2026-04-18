@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Any
 
 from graphops_orchestrator.agent_schemas import (
@@ -23,6 +24,7 @@ from graphops_orchestrator.prompts import (
     report_prompt,
     triage_prompt,
 )
+from graphops_orchestrator.telemetry import llm_calls_total, llm_duration_seconds, measure_span
 
 
 class BaseReasoner(ABC):
@@ -191,37 +193,47 @@ class OllamaReasoner(BaseReasoner):
             num_predict=1024,
         )
 
-    async def _invoke_structured(self, prompt: str, schema: type[Any]) -> Any:
+    async def _invoke_structured(self, prompt: str, schema: type[Any], *, agent_name: str) -> Any:
         runnable = self._llm.with_structured_output(schema, method="json_schema")
+        started = perf_counter()
+        status = "ok"
         try:
-            return await runnable.ainvoke(prompt)
+            with measure_span("llm_call", agent_name=agent_name, model_name=self.model_name):
+                return await runnable.ainvoke(prompt)
         except Exception as exc:
+            status = "error"
             raise RuntimeError(
                 f"Ollama model '{self.model_name}' failed during structured generation. "
                 "Check that the model can run locally, that Ollama has enough memory, "
                 "or temporarily switch REASONER_PROVIDER=rules for offline workflow testing."
             ) from exc
+        finally:
+            llm_calls_total.labels(agent_name, self.model_name, status).inc()
+            llm_duration_seconds.labels(agent_name, self.model_name, status).observe(
+                perf_counter() - started
+            )
 
     async def triage(self, payload: dict[str, Any]) -> TriageDecision:
-        return await self._invoke_structured(triage_prompt(payload), TriageDecision)
+        return await self._invoke_structured(triage_prompt(payload), TriageDecision, agent_name="triage_agent")
 
     async def analyze_evidence(self, source_type: str, payload: dict[str, Any]) -> EvidenceAgentResult:
         return await self._invoke_structured(
             evidence_prompt(f"{source_type.title()} Agent", payload),
             EvidenceAgentResult,
+            agent_name=f"{source_type}_agent",
         )
 
     async def plan(self, payload: dict[str, Any]) -> PlannerDecision:
-        return await self._invoke_structured(planner_prompt(payload), PlannerDecision)
+        return await self._invoke_structured(planner_prompt(payload), PlannerDecision, agent_name="planner_agent")
 
     async def critique(self, payload: dict[str, Any]) -> CriticVerdict:
-        return await self._invoke_structured(critic_prompt(payload), CriticVerdict)
+        return await self._invoke_structured(critic_prompt(payload), CriticVerdict, agent_name="critic_agent")
 
     async def policy(self, payload: dict[str, Any]) -> PolicyDecision:
-        return await self._invoke_structured(policy_prompt(payload), PolicyDecision)
+        return await self._invoke_structured(policy_prompt(payload), PolicyDecision, agent_name="policy_agent")
 
     async def report(self, payload: dict[str, Any]) -> FinalReport:
-        report = await self._invoke_structured(report_prompt(payload), ReportDecision)
+        report = await self._invoke_structured(report_prompt(payload), ReportDecision, agent_name="report_agent")
         return FinalReport(
             summary=report.summary,
             root_cause=report.root_cause,

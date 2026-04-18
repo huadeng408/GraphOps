@@ -5,14 +5,21 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type MySQLStore struct {
-	db *sql.DB
+	db    *sql.DB
+	redis redisClient
 }
 
-func NewMySQLStore(db *sql.DB) *MySQLStore {
-	return &MySQLStore{db: db}
+func NewMySQLStore(db *sql.DB, redisClients ...*redis.Client) *MySQLStore {
+	var redis redisClient
+	if len(redisClients) > 0 && redisClients[0] != nil {
+		redis = redisClients[0]
+	}
+	return &MySQLStore{db: db, redis: redis}
 }
 
 func (s *MySQLStore) QueryChanges(req QueryRequest) (QueryResponse, error) {
@@ -42,13 +49,34 @@ func (s *MySQLStore) QueryDependencies(req QueryRequest) (QueryResponse, error) 
 func (s *MySQLStore) Rollback(req RollbackRequest) (RollbackResponse, error) {
 	ctx := context.Background()
 
+	var redisKey string
+	if s.redis != nil {
+		redisKey = rollbackRedisKey(req)
+		locked, err := s.redis.SetNX(ctx, redisKey, "pending", rollbackIdempotencyTTL).Result()
+		if err == nil && !locked {
+			if existing, dbErr := s.getReceiptByKey(ctx, req.IdempotencyKey); dbErr == nil && existing != nil {
+				recordRollbackResult("idempotent")
+				return RollbackResponse{Receipt: *existing}, nil
+			}
+		}
+	}
+
 	if existing, err := s.getReceiptByKey(ctx, req.IdempotencyKey); err != nil {
+		if s.redis != nil && redisKey != "" {
+			_ = s.redis.Del(ctx, redisKey).Err()
+		}
+		recordRollbackResult("db_error")
 		return RollbackResponse{}, err
 	} else if existing != nil {
+		recordRollbackResult("idempotent")
 		return RollbackResponse{Receipt: *existing}, nil
 	}
 
 	if _, ok := scenarioData[req.ScenarioKey]; !ok {
+		if s.redis != nil && redisKey != "" {
+			_ = s.redis.Del(ctx, redisKey).Err()
+		}
+		recordRollbackResult("scenario_not_found")
 		return RollbackResponse{}, errUnknownScenario
 	}
 
@@ -77,8 +105,19 @@ func (s *MySQLStore) Rollback(req RollbackRequest) (RollbackResponse, error) {
 		receipt.ExecutedAt,
 	)
 	if err != nil {
+		if s.redis != nil && redisKey != "" {
+			_ = s.redis.Del(ctx, redisKey).Err()
+		}
+		recordRollbackResult("db_error")
 		return RollbackResponse{}, err
 	}
+
+	if s.redis != nil && redisKey != "" {
+		if err := s.redis.Set(ctx, redisKey, receipt.ReceiptID, rollbackIdempotencyTTL).Err(); err != nil {
+			_ = s.redis.Del(ctx, redisKey).Err()
+		}
+	}
+	recordRollbackResult("executed")
 
 	return RollbackResponse{Receipt: receipt}, nil
 }
@@ -100,8 +139,10 @@ func (s *MySQLStore) Verify(req VerifyRequest) (VerificationResult, error) {
 		return VerificationResult{}, err
 	}
 	if count > 0 {
+		recordVerificationStatus(data.VerificationAfter.Status)
 		return data.VerificationAfter, nil
 	}
+	recordVerificationStatus(data.VerificationBefore.Status)
 	return data.VerificationBefore, nil
 }
 

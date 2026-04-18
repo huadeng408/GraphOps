@@ -10,7 +10,11 @@ dependencies = [
   "langchain-ollama>=1.1.0",
   "langgraph>=0.2.50",
   "langgraph-checkpoint-sqlite>=3.0.0",
+  "opentelemetry-api>=1.41.0",
+  "opentelemetry-sdk>=1.41.0",
   "pydantic>=2.10.0",
+  "prometheus-client>=0.14.0",
+  "redis>=6.0.0",
   "uvicorn>=0.34.0",
 ]
 

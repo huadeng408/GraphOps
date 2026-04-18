@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: GraphOps
+    orgId: 1
+    folder: GraphOps
+    type: file
+    disableDeletion: true
+    editable: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards

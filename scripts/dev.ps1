@@ -77,7 +77,7 @@ $incident = Start-Process -FilePath "powershell.exe" -ArgumentList @(
 $gateway = Start-Process -FilePath "powershell.exe" -ArgumentList @(
     "-NoProfile",
     "-Command",
-    "`$env:OPS_GATEWAY_ADDR=':8085'; `$env:ACTION_RECEIPT_STORE='$receiptStore'; if (`$env:MYSQL_DSN) { `$env:MYSQL_DSN=`$env:MYSQL_DSN }; Set-Location '$root'; go run ./cmd/ops-gateway"
+    "`$env:OPS_GATEWAY_ADDR=':8085'; `$env:ACTION_RECEIPT_STORE='$receiptStore'; if (`$env:MYSQL_DSN) { `$env:MYSQL_DSN=`$env:MYSQL_DSN }; if (`$env:REDIS_URL) { `$env:REDIS_URL=`$env:REDIS_URL }; Set-Location '$root'; go run ./cmd/ops-gateway"
 ) -RedirectStandardOutput (Join-Path $logs "ops-gateway.out.log") `
   -RedirectStandardError (Join-Path $logs "ops-gateway.err.log") `
   -PassThru
@@ -85,7 +85,7 @@ $gateway = Start-Process -FilePath "powershell.exe" -ArgumentList @(
 $orchestrator = Start-Process -FilePath "powershell.exe" -ArgumentList @(
     "-NoProfile",
     "-Command",
-    "`$env:INCIDENT_API_URL='http://127.0.0.1:8082'; `$env:OPS_GATEWAY_URL='http://127.0.0.1:8085'; `$env:CHECKPOINTER_BACKEND='sqlite'; `$env:CHECKPOINTER_SQLITE_PATH='$root\orchestrator\data\langgraph.sqlite'; if (-not `$env:REASONER_PROVIDER) { `$env:REASONER_PROVIDER='ollama' }; if (-not `$env:OLLAMA_MODEL) { `$env:OLLAMA_MODEL='qwen3:4b' }; Set-Location '$root\orchestrator'; python -m uvicorn graphops_orchestrator.app:app --host 127.0.0.1 --port 8090"
+    "`$env:INCIDENT_API_URL='http://127.0.0.1:8082'; `$env:OPS_GATEWAY_URL='http://127.0.0.1:8085'; `$env:CHECKPOINTER_BACKEND='sqlite'; `$env:CHECKPOINTER_SQLITE_PATH='$root\orchestrator\data\langgraph.sqlite'; if (`$env:REDIS_URL) { `$env:REDIS_URL=`$env:REDIS_URL }; if (-not `$env:REASONER_PROVIDER) { `$env:REASONER_PROVIDER='ollama' }; if (-not `$env:OLLAMA_MODEL) { `$env:OLLAMA_MODEL='qwen3:4b' }; Set-Location '$root\orchestrator'; python -m uvicorn graphops_orchestrator.app:app --host 127.0.0.1 --port 8090"
 ) -RedirectStandardOutput (Join-Path $logs "orchestrator.out.log") `
   -RedirectStandardError (Join-Path $logs "orchestrator.err.log") `
   -PassThru

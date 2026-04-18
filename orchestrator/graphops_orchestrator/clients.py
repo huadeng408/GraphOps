@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 import httpx
@@ -11,6 +12,7 @@ from graphops_orchestrator.models import (
     ToolResponse,
     VerificationResult,
 )
+from graphops_orchestrator.telemetry import measure_span, tool_call_duration_seconds
 
 
 class IncidentAPIClient:
@@ -119,13 +121,13 @@ class OpsGatewayClient:
         self.base_url = base_url.rstrip("/")
 
     async def query_changes(self, incident_id: str, service_name: str, scenario_key: str) -> ToolResponse:
-        return await self._query_tool("/tools/changes/query", incident_id, service_name, scenario_key)
+        return await self._query_tool("changes", "/tools/changes/query", incident_id, service_name, scenario_key)
 
     async def query_logs(self, incident_id: str, service_name: str, scenario_key: str) -> ToolResponse:
-        return await self._query_tool("/tools/logs/query", incident_id, service_name, scenario_key)
+        return await self._query_tool("logs", "/tools/logs/query", incident_id, service_name, scenario_key)
 
     async def query_dependencies(self, incident_id: str, service_name: str, scenario_key: str) -> ToolResponse:
-        return await self._query_tool("/tools/dependency/query", incident_id, service_name, scenario_key)
+        return await self._query_tool("dependency", "/tools/dependency/query", incident_id, service_name, scenario_key)
 
     async def rollback(
         self,
@@ -135,9 +137,10 @@ class OpsGatewayClient:
         idempotency_key: str,
         requested_by: str,
     ) -> RollbackResponse:
-        payload = await self._request(
-            "POST",
-            "/actions/rollback",
+        payload = await self._request_with_metrics(
+            tool_name="rollback",
+            method="POST",
+            path="/actions/rollback",
             json={
                 "incident_id": incident_id,
                 "scenario_key": scenario_key,
@@ -149,9 +152,10 @@ class OpsGatewayClient:
         return RollbackResponse.model_validate(payload)
 
     async def verify(self, incident_id: str, service_name: str, scenario_key: str) -> VerificationResult:
-        payload = await self._request(
-            "POST",
-            "/actions/verify",
+        payload = await self._request_with_metrics(
+            tool_name="verify",
+            method="POST",
+            path="/actions/verify",
             json={
                 "incident_id": incident_id,
                 "service_name": service_name,
@@ -160,10 +164,18 @@ class OpsGatewayClient:
         )
         return VerificationResult.model_validate(payload)
 
-    async def _query_tool(self, path: str, incident_id: str, service_name: str, scenario_key: str) -> ToolResponse:
-        payload = await self._request(
-            "POST",
-            path,
+    async def _query_tool(
+        self,
+        tool_name: str,
+        path: str,
+        incident_id: str,
+        service_name: str,
+        scenario_key: str,
+    ) -> ToolResponse:
+        payload = await self._request_with_metrics(
+            tool_name=tool_name,
+            method="POST",
+            path=path,
             json={
                 "incident_id": incident_id,
                 "service_name": service_name,
@@ -172,6 +184,25 @@ class OpsGatewayClient:
             },
         )
         return ToolResponse.model_validate(payload)
+
+    async def _request_with_metrics(
+        self,
+        *,
+        tool_name: str,
+        method: str,
+        path: str,
+        json: dict[str, Any],
+    ) -> dict[str, Any]:
+        started = perf_counter()
+        status = "ok"
+        with measure_span("tool_call", tool_name=tool_name, method=method, path=path):
+            try:
+                return await self._request(method, path, json=json)
+            except Exception:
+                status = "error"
+                raise
+            finally:
+                tool_call_duration_seconds.labels(tool_name, status).observe(perf_counter() - started)
 
     async def _request(self, method: str, path: str, json: dict[str, Any]) -> dict[str, Any]:
         async with httpx.AsyncClient(base_url=self.base_url, timeout=10.0, trust_env=False) as client:

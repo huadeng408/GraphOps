@@ -7,6 +7,7 @@ import (
 	"os"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/redis/go-redis/v9"
 
 	"graphops/internal/opsgateway"
 )
@@ -14,8 +15,10 @@ import (
 func main() {
 	addr := envOrDefault("OPS_GATEWAY_ADDR", ":8085")
 	storeType := envOrDefault("ACTION_RECEIPT_STORE", "memory")
+	redisClient, redisCleanup := buildRedisClient()
+	defer redisCleanup()
 
-	store, cleanup := mustBuildStore(storeType)
+	store, cleanup := mustBuildStore(storeType, redisClient)
 	defer cleanup()
 	server := opsgateway.NewServer(store)
 
@@ -32,10 +35,10 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-func mustBuildStore(storeType string) (opsgateway.GatewayStore, func()) {
+func mustBuildStore(storeType string, redisClient *redis.Client) (opsgateway.GatewayStore, func()) {
 	switch storeType {
 	case "memory":
-		return opsgateway.NewStore(), func() {}
+		return opsgateway.NewStore(redisClient), func() {}
 	case "mysql":
 		dsn := os.Getenv("MYSQL_DSN")
 		if dsn == "" {
@@ -48,11 +51,27 @@ func mustBuildStore(storeType string) (opsgateway.GatewayStore, func()) {
 		if err := db.Ping(); err != nil {
 			log.Fatal(err)
 		}
-		return opsgateway.NewMySQLStore(db), func() {
+		return opsgateway.NewMySQLStore(db, redisClient), func() {
 			_ = db.Close()
 		}
 	default:
 		log.Fatalf("unsupported ACTION_RECEIPT_STORE: %s", storeType)
 		return nil, func() {}
+	}
+}
+
+func buildRedisClient() (*redis.Client, func()) {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		return nil, func() {}
+	}
+
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		log.Fatalf("invalid REDIS_URL: %v", err)
+	}
+	client := redis.NewClient(opts)
+	return client, func() {
+		_ = client.Close()
 	}
 }
