@@ -2,12 +2,32 @@ package incidentapi
 
 import "time"
 
+type IncidentContext struct {
+	Cluster         string            `json:"cluster"`
+	Namespace       string            `json:"namespace"`
+	Environment     string            `json:"environment"`
+	AlertName       string            `json:"alert_name"`
+	AlertStartedAt  time.Time         `json:"alert_started_at"`
+	ReleaseID       string            `json:"release_id"`
+	ReleaseVersion  string            `json:"release_version"`
+	PreviousVersion string            `json:"previous_version"`
+	Labels          map[string]string `json:"labels,omitempty"`
+}
+
+type VerificationPolicy struct {
+	WindowMinutes         int     `json:"window_minutes"`
+	MaxErrorRate          float64 `json:"max_error_rate"`
+	MaxP95LatencyMs       int     `json:"max_p95_latency_ms"`
+	MinimumPassingSignals int     `json:"minimum_passing_signals"`
+}
+
 type Incident struct {
 	ID           string            `json:"id"`
 	ServiceName  string            `json:"service_name"`
 	Severity     string            `json:"severity"`
 	AlertSummary string            `json:"alert_summary"`
-	ScenarioKey  string            `json:"scenario_key"`
+	PlaybookKey  string            `json:"playbook_key,omitempty"`
+	Context      *IncidentContext  `json:"context,omitempty"`
 	Status       string            `json:"status"`
 	Approval     *ApprovalDecision `json:"approval,omitempty"`
 	Analysis     *AnalysisSnapshot `json:"analysis,omitempty"`
@@ -69,11 +89,15 @@ type Hypothesis struct {
 }
 
 type ActionPlan struct {
-	ActionType       string   `json:"action_type"`
-	TargetService    string   `json:"target_service"`
-	Reason           string   `json:"reason"`
-	EvidenceIDs      []string `json:"evidence_ids"`
-	RequiresApproval bool     `json:"requires_approval"`
+	ActionType         string              `json:"action_type"`
+	TargetService      string              `json:"target_service"`
+	CurrentRevision    string              `json:"current_revision"`
+	TargetRevision     string              `json:"target_revision"`
+	Reason             string              `json:"reason"`
+	RiskLevel          string              `json:"risk_level"`
+	EvidenceIDs        []string            `json:"evidence_ids"`
+	VerificationPolicy *VerificationPolicy `json:"verification_policy,omitempty"`
+	RequiresApproval   bool                `json:"requires_approval"`
 }
 
 type ActionReceipt struct {
@@ -81,7 +105,11 @@ type ActionReceipt struct {
 	IdempotencyKey     string    `json:"idempotency_key"`
 	ActionType         string    `json:"action_type"`
 	TargetService      string    `json:"target_service"`
+	Executor           string    `json:"executor"`
+	FromRevision       string    `json:"from_revision"`
+	ToRevision         string    `json:"to_revision"`
 	Status             string    `json:"status"`
+	StatusDetail       string    `json:"status_detail"`
 	ExecutedAt         time.Time `json:"executed_at"`
 	VerificationStatus string    `json:"verification_status"`
 }
@@ -96,10 +124,17 @@ type FinalReport struct {
 }
 
 type CreateIncidentRequest struct {
-	ServiceName  string `json:"service_name"`
-	Severity     string `json:"severity"`
-	AlertSummary string `json:"alert_summary"`
-	ScenarioKey  string `json:"scenario_key"`
+	ServiceName  string           `json:"service_name"`
+	Severity     string           `json:"severity"`
+	AlertSummary string           `json:"alert_summary"`
+	PlaybookKey  string           `json:"playbook_key,omitempty"`
+	Context      *IncidentContext `json:"context,omitempty"`
+}
+
+type ListIncidentsRequest struct {
+	ServiceName string `json:"service_name,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
 }
 
 type ReviewIncidentRequest struct {

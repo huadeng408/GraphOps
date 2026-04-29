@@ -17,6 +17,7 @@ type Store struct {
 	mu              sync.RWMutex
 	receiptSeq      atomic.Uint64
 	receiptsByKey   map[string]ActionReceipt
+	receiptKeyByInc map[string]string
 	rolledBackByInc map[string]bool
 	redis           redisClient
 }
@@ -28,13 +29,14 @@ func NewStore(redisClients ...*redis.Client) *Store {
 	}
 	return &Store{
 		receiptsByKey:   make(map[string]ActionReceipt),
+		receiptKeyByInc: make(map[string]string),
 		rolledBackByInc: make(map[string]bool),
 		redis:           redis,
 	}
 }
 
 func (s *Store) QueryChanges(req QueryRequest) (QueryResponse, error) {
-	data, ok := scenarioData[req.ScenarioKey]
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
 	if !ok {
 		return QueryResponse{}, errUnknownScenario
 	}
@@ -42,7 +44,7 @@ func (s *Store) QueryChanges(req QueryRequest) (QueryResponse, error) {
 }
 
 func (s *Store) QueryLogs(req QueryRequest) (QueryResponse, error) {
-	data, ok := scenarioData[req.ScenarioKey]
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
 	if !ok {
 		return QueryResponse{}, errUnknownScenario
 	}
@@ -50,7 +52,7 @@ func (s *Store) QueryLogs(req QueryRequest) (QueryResponse, error) {
 }
 
 func (s *Store) QueryDependencies(req QueryRequest) (QueryResponse, error) {
-	data, ok := scenarioData[req.ScenarioKey]
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
 	if !ok {
 		return QueryResponse{}, errUnknownScenario
 	}
@@ -66,7 +68,8 @@ func (s *Store) Rollback(req RollbackRequest) (RollbackResponse, error) {
 		return RollbackResponse{Receipt: receipt}, nil
 	}
 
-	if _, ok := scenarioData[req.ScenarioKey]; !ok {
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
+	if !ok {
 		recordRollbackResult("scenario_not_found")
 		return RollbackResponse{}, errUnknownScenario
 	}
@@ -88,11 +91,16 @@ func (s *Store) Rollback(req RollbackRequest) (RollbackResponse, error) {
 		IdempotencyKey: req.IdempotencyKey,
 		ActionType:     "rollback",
 		TargetService:  req.TargetService,
+		Executor:       req.RequestedBy,
+		FromRevision:   firstNonEmpty(req.CurrentRevision, data.CurrentRevision),
+		ToRevision:     firstNonEmpty(req.TargetRevision, data.TargetRevision),
 		Status:         "executed",
+		StatusDetail:   "Mock rollback adapter executed the revert workflow and returned a deterministic receipt.",
 		ExecutedAt:     time.Now().UTC(),
 	}
 
 	s.receiptsByKey[req.IdempotencyKey] = receipt
+	s.receiptKeyByInc[req.IncidentID] = req.IdempotencyKey
 	s.rolledBackByInc[req.IncidentID] = true
 	if s.redis != nil && redisKey != "" {
 		if err := s.redis.Set(context.Background(), redisKey, receipt.ReceiptID, rollbackIdempotencyTTL).Err(); err != nil {
@@ -105,15 +113,21 @@ func (s *Store) Rollback(req RollbackRequest) (RollbackResponse, error) {
 }
 
 func (s *Store) Verify(req VerifyRequest) (VerificationResult, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	data, ok := scenarioData[req.ScenarioKey]
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
 	if !ok {
 		return VerificationResult{}, errUnknownScenario
 	}
 
 	if s.rolledBackByInc[req.IncidentID] {
+		if key, ok := s.receiptKeyByInc[req.IncidentID]; ok {
+			if receipt, ok := s.receiptsByKey[key]; ok {
+				receipt.VerificationStatus = data.VerificationAfter.Status
+				s.receiptsByKey[key] = receipt
+			}
+		}
 		recordVerificationStatus(data.VerificationAfter.Status)
 		return data.VerificationAfter, nil
 	}

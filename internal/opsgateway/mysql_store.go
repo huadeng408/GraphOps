@@ -23,7 +23,7 @@ func NewMySQLStore(db *sql.DB, redisClients ...*redis.Client) *MySQLStore {
 }
 
 func (s *MySQLStore) QueryChanges(req QueryRequest) (QueryResponse, error) {
-	data, ok := scenarioData[req.ScenarioKey]
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
 	if !ok {
 		return QueryResponse{}, errUnknownScenario
 	}
@@ -31,7 +31,7 @@ func (s *MySQLStore) QueryChanges(req QueryRequest) (QueryResponse, error) {
 }
 
 func (s *MySQLStore) QueryLogs(req QueryRequest) (QueryResponse, error) {
-	data, ok := scenarioData[req.ScenarioKey]
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
 	if !ok {
 		return QueryResponse{}, errUnknownScenario
 	}
@@ -39,7 +39,7 @@ func (s *MySQLStore) QueryLogs(req QueryRequest) (QueryResponse, error) {
 }
 
 func (s *MySQLStore) QueryDependencies(req QueryRequest) (QueryResponse, error) {
-	data, ok := scenarioData[req.ScenarioKey]
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
 	if !ok {
 		return QueryResponse{}, errUnknownScenario
 	}
@@ -72,7 +72,8 @@ func (s *MySQLStore) Rollback(req RollbackRequest) (RollbackResponse, error) {
 		return RollbackResponse{Receipt: *existing}, nil
 	}
 
-	if _, ok := scenarioData[req.ScenarioKey]; !ok {
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
+	if !ok {
 		if s.redis != nil && redisKey != "" {
 			_ = s.redis.Del(ctx, redisKey).Err()
 		}
@@ -85,22 +86,30 @@ func (s *MySQLStore) Rollback(req RollbackRequest) (RollbackResponse, error) {
 		IdempotencyKey: req.IdempotencyKey,
 		ActionType:     "rollback",
 		TargetService:  req.TargetService,
+		Executor:       req.RequestedBy,
+		FromRevision:   firstNonEmpty(req.CurrentRevision, data.CurrentRevision),
+		ToRevision:     firstNonEmpty(req.TargetRevision, data.TargetRevision),
 		Status:         "executed",
+		StatusDetail:   "Mock rollback adapter executed the revert workflow and persisted the receipt.",
 		ExecutedAt:     time.Now().UTC(),
 	}
 
 	_, err := s.db.ExecContext(
 		ctx,
 		`INSERT INTO action_receipts (
-			receipt_id, incident_id, scenario_key, idempotency_key, action_type, target_service, status, verification_status, executed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			receipt_id, incident_id, playbook_key, idempotency_key, action_type, target_service, executor, from_revision, to_revision, status, status_detail, verification_status, executed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		receipt.ReceiptID,
 		req.IncidentID,
-		req.ScenarioKey,
+		resolvePlaybookKey(req.PlaybookKey),
 		receipt.IdempotencyKey,
 		receipt.ActionType,
 		receipt.TargetService,
+		receipt.Executor,
+		receipt.FromRevision,
+		receipt.ToRevision,
 		receipt.Status,
+		receipt.StatusDetail,
 		receipt.VerificationStatus,
 		receipt.ExecutedAt,
 	)
@@ -123,13 +132,15 @@ func (s *MySQLStore) Rollback(req RollbackRequest) (RollbackResponse, error) {
 }
 
 func (s *MySQLStore) Verify(req VerifyRequest) (VerificationResult, error) {
-	data, ok := scenarioData[req.ScenarioKey]
+	ctx := context.Background()
+
+	data, ok := scenarioData[resolvePlaybookKey(req.PlaybookKey)]
 	if !ok {
 		return VerificationResult{}, errUnknownScenario
 	}
 
 	row := s.db.QueryRowContext(
-		context.Background(),
+		ctx,
 		`SELECT COUNT(1) FROM action_receipts WHERE incident_id = ? AND action_type = 'rollback'`,
 		req.IncidentID,
 	)
@@ -139,6 +150,16 @@ func (s *MySQLStore) Verify(req VerifyRequest) (VerificationResult, error) {
 		return VerificationResult{}, err
 	}
 	if count > 0 {
+		if _, err := s.db.ExecContext(
+			ctx,
+			`UPDATE action_receipts
+			 SET verification_status = ?
+			 WHERE incident_id = ? AND action_type = 'rollback'`,
+			data.VerificationAfter.Status,
+			req.IncidentID,
+		); err != nil {
+			return VerificationResult{}, err
+		}
 		recordVerificationStatus(data.VerificationAfter.Status)
 		return data.VerificationAfter, nil
 	}
@@ -149,7 +170,7 @@ func (s *MySQLStore) Verify(req VerifyRequest) (VerificationResult, error) {
 func (s *MySQLStore) getReceiptByKey(ctx context.Context, key string) (*ActionReceipt, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT receipt_id, idempotency_key, action_type, target_service, status, executed_at, verification_status
+		`SELECT receipt_id, idempotency_key, action_type, target_service, executor, from_revision, to_revision, status, status_detail, executed_at, verification_status
 		 FROM action_receipts
 		 WHERE idempotency_key = ?`,
 		key,
@@ -161,7 +182,11 @@ func (s *MySQLStore) getReceiptByKey(ctx context.Context, key string) (*ActionRe
 		&receipt.IdempotencyKey,
 		&receipt.ActionType,
 		&receipt.TargetService,
+		&receipt.Executor,
+		&receipt.FromRevision,
+		&receipt.ToRevision,
 		&receipt.Status,
+		&receipt.StatusDetail,
 		&receipt.ExecutedAt,
 		&receipt.VerificationStatus,
 	); err != nil {

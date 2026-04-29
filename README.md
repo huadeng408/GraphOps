@@ -1,45 +1,64 @@
 # GraphOps
 
-面向线上发布后故障定位与应急处置场景的多 Agent 运维系统。项目采用 `Go + LangGraph` 分层架构：Go 负责 incident、审批、执行回执与持久化等业务真相，LangGraph 负责编排多 Agent 并行取证、诊断规划、人工审批中断恢复和最终报告生成。
+GraphOps 是一个面向发布后故障定位与应急处置的多 Agent 运维系统，聚焦一个高频且适合打通闭环的场景：
 
-当前版本围绕两类高频场景构建：
+- 发布配置/版本回归导致 `5xx` 飙升
 
-- 发布配置/版本回归导致的 5xx 飙升
-- 下游依赖异常传播导致的主服务超时与报错
+项目采用 `Go + LangGraph` 分层架构：
 
-系统目标不是替代人工值班，而是把告警触发后的第一轮诊断和安全处置链路结构化，并对高风险动作加入明确的审批、幂等和恢复验证机制。
+- `Go` 负责 incident 生命周期、审批、执行回执、审计与持久化
+- `LangGraph` 负责多 Agent 并行取证、诊断规划、审批中断恢复、回滚执行与最终报告生成
 
-## 主要能力
+系统目标不是替代人工值班，而是把告警触发后的第一轮诊断链路结构化，把“取证、判断、审批、回滚、验证、报告”组织成一条可恢复、可审计、可观测的工作流。
 
-- `Go + LangGraph` 分层架构
-  - `incident-api` 维护 incident 生命周期、审批与报告查询
-  - `ops-gateway` 暴露只读工具接口、执行回滚与恢复验证
-  - `orchestrator` 使用 LangGraph 编排多 Agent 工作流
-- 多 Agent 并行取证
-  - `Change Agent`、`Log Agent`、`Dependency Agent` 作为三条并行取证分支分别采集变更、日志与依赖链证据
-  - `Planner Agent` 在三类证据汇合后生成根因假设与处置方案
-  - `Critic Agent` 审查方案并支持一次 replan
-  - `Policy Agent` 评估动作风险并决定是否进入审批
-- 人在回路的安全执行
-  - LangGraph `interrupt + checkpoint`
-  - 人工审批后恢复执行
-  - `rollback` 幂等控制
-  - 自动恢复验证与报告生成
-- 结构化诊断数据模型
-  - `Evidence`
-  - `Hypothesis`
-  - `ActionPlan`
-  - `ActionReceipt`
-  - `FinalReport`
-- 可观测与运行保护
-  - Redis 运行锁与回滚幂等键
-  - `/metrics` 暴露 Prometheus 指标
-  - Grafana 自动加载数据源与 dashboard
-- 回放与评测
-  - 支持 36 个场景样本 replay
-  - 输出动作准确率、误回滚率、恢复率与延迟指标
+## 核心能力
 
-## 整体架构
+- 多 Agent 协作诊断
+  - `Triage Agent` 识别是否进入发布后故障工作流
+  - `Change Agent`、`Log Agent`、`Dependency Agent` 三个主分支并行取证
+  - `Planner Agent` 汇总证据并生成根因假设与回滚计划
+  - `Critic Agent` 复核证据充分性，必要时触发一次 replan
+  - `Policy Agent` 根据风险决定是否进入人工审批
+  - `Report Agent` 输出最终诊断报告
+- LangGraph 编排
+  - 三个主并行分支在同一张图里汇合
+  - 支持 `interrupt / resume`
+  - 支持 checkpoint 持久化与中断恢复
+- 安全处置闭环
+  - 高风险写操作默认进入审批
+  - 回滚请求带幂等键
+  - 回滚后自动执行恢复验证
+- 可观测性
+  - Prometheus 指标
+  - Grafana 看板
+  - incident 事件时间线
+  - agent run 审计
+- 演示控制台
+  - 单页 `/demo` 控制台
+  - 实时指标、趋势、人工审批、历史报告查询
+
+## 为什么强调多 Agent
+
+GraphOps 的核心不是“让一个模型回答问题”，而是把一次线上故障拆成多个职责清晰、可并行、可审计的 Agent 协作过程。
+
+在主场景里，三个主并行 Agent 分别回答三个不同问题：
+
+- `Change Agent`
+  - 最近一次发布改了什么
+  - 是否存在配置、版本、连接参数变化
+  - 当前版本和回滚目标版本是什么
+- `Log Agent`
+  - 错误是否集中在本服务
+  - 是否出现数据库连接、认证、配置不匹配等局部异常模式
+  - 错误与发布时间是否强相关
+- `Dependency Agent`
+  - 下游依赖是否健康
+  - 是否存在错误放大
+  - 故障是否主要由依赖传播导致
+
+这三个分支并行执行，先各自产生结构化证据，再汇总到 `Planner Agent`。这样的拆分既符合真实值班场景，也让工作流更容易解释、验证和审计。
+
+## 架构
 
 ```mermaid
 flowchart LR
@@ -47,11 +66,11 @@ flowchart LR
   B --> O["orchestrator (Python + LangGraph)"]
   O --> G["ops-gateway (Go)"]
   B --> DB[("MySQL")]
-  G --> DB
   O --> CP[("SQLite Checkpoint")]
   O --> R[("Redis")]
   O --> M[("Prometheus / Grafana")]
   G --> M
+  G --> DB
 ```
 
 ### 服务职责
@@ -59,108 +78,120 @@ flowchart LR
 #### `incident-api`
 
 - 创建和查询 incident
+- 持久化 incident 上下文
 - 审批通过/拒绝
 - 保存分析结果与最终报告
-- 记录事件时间线与 agent run 审计信息
+- 查询事件时间线与 agent run 审计
 
 #### `ops-gateway`
 
-- 查询变更、日志、依赖关系
-- 执行回滚动作
-- 查询恢复验证结果
-- 使用 Redis 保存最小幂等键
+- 暴露只读工具接口
+- 暴露回滚动作接口
+- 暴露恢复验证接口
+- 承载回滚幂等控制
 - 暴露 Prometheus 指标
 
 #### `orchestrator`
 
 - 加载 incident 上下文
-- 执行多 Agent 并行取证
-- 触发 `Planner -> Critic -> Policy` 协作链
-- 在审批节点 `interrupt`
-- 审批后继续执行回滚、验证与报告生成
+- 执行多 Agent 编排
+- 处理并行分支汇合
+- 在审批节点中断
+- 审批后恢复执行回滚与验证
+- 输出最终报告
 - 暴露 Prometheus 指标
 
-## Multi-Agent 工作流
+## LangGraph 工作流
 
 ```mermaid
 flowchart TD
   A["incident created"] --> B["Triage Agent"]
-  B --> C["parallel: Change Agent / Log Agent / Dependency Agent"]
-  C --> D["Planner Agent"]
+  B --> C1["Change Agent"]
+  B --> C2["Log Agent"]
+  B --> C3["Dependency Agent"]
+  C1 --> D["Planner Agent"]
+  C2 --> D
+  C3 --> D
   D --> E["Critic Agent"]
-  E -->|replan| D
-  E -->|approved| F["Policy Agent"]
-  F -->|allow| G["rollback_action"]
-  F -->|require approval| H["interrupt / human approval"]
-  H -->|approved| G
-  H -->|rejected| J["final report"]
-  G --> I["verify recovery"]
-  I --> J["final report"]
-  F -->|deny or no action| J
+  E -->|request_replan| D
+  E -->|approve_plan| F["Policy Agent"]
+  F -->|require_human_approval| G["Approval Gate"]
+  F -->|deny / no action| J["Report Agent"]
+  G -->|approved| H["rollback_action"]
+  G -->|rejected| J
+  H --> I["verify_recovery"]
+  I --> J
+  J --> K["final report"]
 ```
 
-在编排上，`Change Agent`、`Log Agent`、`Dependency Agent` 从 `Triage Agent` 后并行展开，完成三类证据采集后再汇合到 `Planner Agent`。`Planner Agent` 负责统一吸收并行分支产出的结构化证据，并继续交给 `Critic Agent` 和 `Policy Agent` 完成方案审查与动作决策。
+### 编排特点
 
-### Agent 说明
+- 三个主取证 Agent 并行执行
+- `Planner -> Critic -> Policy` 构成诊断与安全决策主链
+- `approval_gate` 使用 LangGraph `interrupt`
+- `resume` 在人工审批后恢复到图中断点继续执行
+- checkpoint 状态与业务真相分离
 
-当前代码中已经实现的 Agent 角色如下：
+## 结构化数据模型
 
-- `Triage Agent`
-  - 判断是否进入发布后故障工作流
-  - 识别 incident 类型
-- `Change Agent`
-  - 从工具结果中提取结构化变更证据
-- `Log Agent`
-  - 归纳错误模式与高频异常
-- `Dependency Agent`
-  - 分析是否为下游依赖传播
-- `Planner Agent`
-  - 结合证据生成 `Hypothesis + ActionPlan`
-- `Critic Agent`
-  - 审查证据是否充分，必要时触发一次 replanning
-- `Policy Agent`
-  - 将动作映射为 `allow / require_human_approval / deny`
-- `Report Agent`
-  - 输出最终诊断报告
+### Incident 上下文
 
-下列节点属于工作流控制或执行环节，不单独视为 Agent：
+创建 incident 时会携带：
 
-- `approval_gate`
-- `rollback_action`
-- `verify_recovery`
-- `load_incident`
+- `cluster`
+- `namespace`
+- `environment`
+- `alert_name`
+- `alert_started_at`
+- `release_id`
+- `release_version`
+- `previous_version`
+- `labels`
 
-## 持久化与状态边界
+这些字段会贯穿整条工作流，供三个并行 Agent、回滚动作和恢复验证共同使用。
 
-项目把状态分成三层：
+### 诊断结果
 
-- 业务真相
-  - MySQL 中的 `incidents / approvals / evidence_items / action_receipts / incident_events / agent_runs`
-- 编排状态
-  - LangGraph checkpoint，当前使用 SQLite
-- 运行保护
-  - Redis 中的 `runlock:incident:{id}` 与 `idemp:rollback:{incident_id}:{target_service}`
+- `Evidence`
+  - `evidence_id`
+  - `source_type`
+  - `source_ref`
+  - `summary`
+  - `confidence`
+- `Hypothesis`
+  - 根因假设
+  - 证据引用
+  - 置信度
+- `ActionPlan`
+  - `target_service`
+  - `current_revision`
+  - `target_revision`
+  - `risk_level`
+  - `evidence_ids`
+  - `verification_policy`
+  - `requires_approval`
+- `ActionReceipt`
+  - `executor`
+  - `from_revision`
+  - `to_revision`
+  - `status`
+  - `verification_status`
+- `FinalReport`
+  - `summary`
+  - `root_cause`
+  - `recommended_action`
+  - `verification`
 
-这种分层保证了工作流中断可恢复，同时不把 LangGraph state 直接作为业务数据库使用。
+## 可观测性
 
-## Redis 用途
-
-当前 Redis 只承担最必要的两类职责：
-
-- `incident run lock`
-  - 防止同一个 incident 被重复 `run()` / `resume()`
-- `rollback` 幂等键
-  - 先用 Redis 做快速防重，再由 MySQL 唯一键兜底
-
-这部分设计保持最小职责，不承载业务真相。
-
-## 可观测能力
-
-项目采用 metrics-first 方案，服务直接暴露 `/metrics`。
+项目采用 metrics-first 方案。`orchestrator` 与 `ops-gateway` 直接暴露 `/metrics`，Prometheus 抓取后由 Grafana 展示。
 
 ### 关键指标
 
 - `graph_node_duration_seconds`
+- `graph_interrupts_total`
+- `graph_replans_total`
+- `evidence_items_total`
 - `tool_call_duration_seconds`
 - `approval_wait_duration_seconds`
 - `incident_runs_total`
@@ -168,10 +199,9 @@ flowchart TD
 - `llm_duration_seconds`
 - `rollback_requests_total`
 - `recovery_verification_total`
+- `audit_write_failures_total`
 
-### Dashboard
-
-Grafana 自动加载两张看板：
+### 看板
 
 - `GraphOps Incident Overview`
 - `GraphOps Agent Runtime`
@@ -183,6 +213,87 @@ Grafana 自动加载两张看板：
   - 用户名：`admin`
   - 密码：`admin`
 
+## 多模型路由
+
+GraphOps 支持将不同 Agent 路由到不同本地模型，以体现“轻量并行 + 主链路强推理”的设计。
+
+默认配置：
+
+- 主链路 `Triage / Planner / Critic / Policy / Report`
+  - `qwen3:4b`
+- 并行证据分支 `Change / Log / Dependency`
+  - `qwen3:1.7b`
+
+这种划分使得：
+
+- 三个主并行 Agent 走更轻的子模型，降低并发成本
+- 主决策链仍由更强的主模型负责
+- 前端控制台可直接显示 provider、主模型、并行模型，以及每个 agent run 的实际模型名
+
+## 演示控制台
+
+项目内置一个前端控制台：
+
+- [http://127.0.0.1:8082/demo](http://127.0.0.1:8082/demo)
+
+控制台包含：
+
+- 运行态总览
+- 三个主并行 Agent 说明
+- 指标拆解与趋势
+- incident 快照
+- evidence / report 展示
+- agent timeline
+- 人工审批按钮
+- 最近一次联调摘要
+- 历史报告查询
+
+## API
+
+### incident-api
+
+- `POST /incidents`
+- `GET /incidents`
+- `GET /incidents/{id}`
+- `GET /incidents/{id}/events`
+- `GET /incidents/{id}/agent-runs`
+- `POST /incidents/{id}/approve`
+- `POST /incidents/{id}/reject`
+- `GET /incidents/{id}/report`
+
+### orchestrator
+
+- `GET /healthz`
+- `POST /runs/incidents/{incident_id}`
+- `POST /runs/incidents/{incident_id}/resume`
+- `GET /metrics`
+
+### ops-gateway
+
+- `POST /tools/changes/query`
+- `POST /tools/logs/query`
+- `POST /tools/dependency/query`
+- `POST /actions/rollback`
+- `POST /actions/verify`
+- `GET /metrics`
+
+## 持久化与状态边界
+
+项目将状态分为三层：
+
+- 业务真相
+  - MySQL 中的 `incidents / approvals / evidence_items / action_receipts / incident_events / agent_runs`
+- 编排状态
+  - LangGraph checkpoint，当前使用 SQLite
+- 运行保护
+  - Redis 中的 `runlock:incident:{id}` 与 `idemp:rollback:{incident_id}:{target_service}`
+
+这种分层保证：
+
+- incident 可审计
+- 编排可恢复
+- 幂等保护不与业务真相耦合
+
 ## 运行环境
 
 ### 依赖
@@ -193,25 +304,31 @@ Grafana 自动加载两张看板：
 - Docker Desktop
 - 可选：本地 Ollama
 
-### 本地模型
+### 推理模式
 
-默认会从环境变量读取：
+默认从环境变量读取：
 
 - `REASONER_PROVIDER`
-- `OLLAMA_MODEL`
+- `OLLAMA_MAIN_MODEL`
+- `OLLAMA_PARALLEL_MODEL`
 - `OLLAMA_BASE_URL`
+- `OLLAMA_NUM_CTX`
+- `OLLAMA_PARALLEL_NUM_CTX`
 
-如果只想验证编排链路、审批和回放逻辑，可以使用规则模式：
+规则模式：
 
 ```powershell
 $env:REASONER_PROVIDER="rules"
 ```
 
-如果使用 Ollama，请根据本机资源选择合适的模型，例如：
+Ollama 模式：
 
 ```powershell
 $env:REASONER_PROVIDER="ollama"
-$env:OLLAMA_MODEL="qwen3:4b"
+$env:OLLAMA_MAIN_MODEL="qwen3:4b"
+$env:OLLAMA_PARALLEL_MODEL="qwen3:1.7b"
+$env:OLLAMA_NUM_CTX="8192"
+$env:OLLAMA_PARALLEL_NUM_CTX="8192"
 ```
 
 ## 快速开始
@@ -222,7 +339,7 @@ $env:OLLAMA_MODEL="qwen3:4b"
 docker compose up -d redis prometheus grafana
 ```
 
-如果希望启用 MySQL：
+如需启用 MySQL：
 
 ```powershell
 docker compose up -d mysql
@@ -238,7 +355,7 @@ $env:REASONER_PROVIDER="rules"
 .\scripts\dev.ps1
 ```
 
-使用 MySQL：
+规则模式 + MySQL：
 
 ```powershell
 $env:REDIS_URL="redis://127.0.0.1:6379/0"
@@ -251,8 +368,11 @@ Ollama 模式：
 ```powershell
 $env:REDIS_URL="redis://127.0.0.1:6379/0"
 $env:REASONER_PROVIDER="ollama"
-$env:OLLAMA_MODEL="qwen3:4b"
-.\scripts\dev.ps1
+$env:OLLAMA_MAIN_MODEL="qwen3:4b"
+$env:OLLAMA_PARALLEL_MODEL="qwen3:1.7b"
+$env:OLLAMA_NUM_CTX="8192"
+$env:OLLAMA_PARALLEL_NUM_CTX="8192"
+.\scripts\dev.ps1 -UseMySQL
 ```
 
 启动成功后可访问：
@@ -260,31 +380,28 @@ $env:OLLAMA_MODEL="qwen3:4b"
 - incident-api: `http://127.0.0.1:8082`
 - ops-gateway: `http://127.0.0.1:8085`
 - orchestrator: `http://127.0.0.1:8090`
+- demo console: `http://127.0.0.1:8082/demo`
 
-## 回放场景
+## 回放
 
-### 快速回放
-
-同时跑主场景和副场景，并自动审批主场景回滚：
+### 主场景回放
 
 ```powershell
 $env:REASONER_PROVIDER="rules"
-.\scripts\replay.ps1 -Scenario both -ApproveMain
+.\scripts\replay.ps1 -ApproveRollback
 ```
 
-### 单场景回放
+### 指定变体
 
 ```powershell
-.\scripts\replay.ps1 -Scenario main -ApproveMain
-.\scripts\replay.ps1 -Scenario secondary
+.\scripts\replay.ps1 -VariantIndex 12 -ApproveRollback
 ```
 
 ## 批量评测
 
-评测脚本内置 36 个样本：
+评测脚本内置 `18` 个发布回归变体样本：
 
 - `release_config_regression_01 ~ 18`
-- `downstream_inventory_outage_01 ~ 18`
 
 运行方式：
 
@@ -296,10 +413,10 @@ $env:REASONER_PROVIDER="rules"
 输出内容包括：
 
 - `action_accuracy`
-- `false_rollback_rate`
 - `rollback_recovered_rate`
 - `median_initial_latency_ms`
 - `median_end_to_end_latency_ms`
+- `waiting_for_approval_case_count`
 
 ## 测试
 
@@ -339,15 +456,6 @@ python -m pytest tests -q
 └── compose.yaml
 ```
 
-## 当前实现说明
+## 一句话概括
 
-系统当前围绕以下能力组织：
-
-- 多 Agent 并行取证与协作诊断
-- 人工审批中断恢复
-- 幂等回滚与恢复验证
-- Redis 最小运行保护
-- 可观测指标与 Grafana 看板
-- 场景回放与批量评测
-
-在此基础上，可以继续扩展更丰富的工具接入、更复杂的 incident 类型和更细粒度的评测集。
+GraphOps 是一个围绕“发布后 5xx 飙升”场景构建的多 Agent 运维编排系统，核心是通过 `Change Agent / Log Agent / Dependency Agent` 三条主并行分支收集证据，再由 LangGraph 将诊断、审批、回滚、恢复验证和最终报告连接成一条可恢复、可审计、可观测的工作流。

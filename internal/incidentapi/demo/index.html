@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GraphOps Command Center</title>
+    <link rel="stylesheet" href="/demo/assets/styles.css" />
+  </head>
+  <body>
+    <div class="console-shell">
+      <header class="console-top">
+        <div class="masthead">
+          <p class="eyebrow">Release Regression Command Center</p>
+          <h1>GraphOps</h1>
+          <p class="hero-text">
+            面向发布后故障定位与应急处置的多 Agent 运维控制台。页面采用“大厂运维平台”常见的信息层级：
+            顶部给出运行态与模型路由，左侧是主观测画布，右侧是实时操作栏。
+          </p>
+          <div class="ribbon-row">
+            <span class="ribbon-chip">Parallel Evidence Collection</span>
+            <span class="ribbon-chip">Human-in-the-Loop Rollback</span>
+            <span class="ribbon-chip">Metrics + Timeline + Report</span>
+          </div>
+        </div>
+        <div class="top-status-grid">
+          <article class="status-card accent">
+            <span class="status-label">Scenario</span>
+            <strong>order-api / Release Regression</strong>
+            <small>发布后配置/版本回归导致 5xx 飙升</small>
+          </article>
+          <article class="status-card">
+            <span class="status-label">Reasoner Provider</span>
+            <strong id="config-provider">-</strong>
+            <small>当前编排实际使用的推理后端</small>
+          </article>
+          <article class="status-card">
+            <span class="status-label">Main Model</span>
+            <strong id="config-main-model">-</strong>
+            <small>Triage / Planner / Critic / Policy / Report</small>
+          </article>
+          <article class="status-card">
+            <span class="status-label">Parallel Model</span>
+            <strong id="config-parallel-model">-</strong>
+            <small>Change / Log / Dependency</small>
+          </article>
+        </div>
+      </header>
+
+      <div class="console-layout">
+        <main class="workspace">
+          <section class="panel overview-panel">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Overview</p>
+                <h2>Runtime Overview</h2>
+              </div>
+              <p class="section-copy">像 CloudWatch、Datadog、Grafana 一样，把最关键的运行态放在第一屏的最上方。</p>
+            </div>
+            <div class="metrics-grid" id="metrics-grid">
+              <div class="metric-card"><span class="metric-label">Incident Runs</span><strong id="metric-runs">-</strong><small>按状态汇总</small></div>
+              <div class="metric-card"><span class="metric-label">Approval Interrupts</span><strong id="metric-interrupts">-</strong><small>graph_interrupts_total</small></div>
+              <div class="metric-card"><span class="metric-label">Replans</span><strong id="metric-replans">-</strong><small>graph_replans_total</small></div>
+              <div class="metric-card"><span class="metric-label">Evidence Items</span><strong id="metric-evidence">-</strong><small>change / log / dependency</small></div>
+              <div class="metric-card"><span class="metric-label">Rollbacks</span><strong id="metric-rollbacks">-</strong><small>rollback_requests_total</small></div>
+              <div class="metric-card"><span class="metric-label">Recovery Checks</span><strong id="metric-recovery">-</strong><small>recovery_verification_total</small></div>
+              <div class="metric-card"><span class="metric-label">LLM Calls</span><strong id="metric-llm">-</strong><small>llm_calls_total</small></div>
+              <div class="metric-card"><span class="metric-label">Audit Failures</span><strong id="metric-audit">-</strong><small>best-effort 审计降级次数</small></div>
+            </div>
+            <div class="status-note" id="metrics-status">正在刷新指标...</div>
+          </section>
+
+          <section class="panel">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Orchestration</p>
+                <h2>Parallel Agent Fabric</h2>
+              </div>
+              <p class="section-copy">三个主并行证据分支先收集事实，再汇合到 Planner、Critic 与 Policy。</p>
+            </div>
+            <div class="agent-grid">
+              <article class="agent-card">
+                <div class="agent-head">
+                  <span class="agent-tag">Parallel Branch 01</span>
+                  <span class="agent-model">模型：<span id="agent-model-change" class="mono">-</span></span>
+                </div>
+                <h3>Change Agent</h3>
+                <p>收集发布窗口、配置项变化、版本变更和可回滚目标版本。</p>
+                <ul>
+                  <li>发布与告警的时间差</li>
+                  <li>连接串、配置包、连接池参数变化</li>
+                  <li>当前版本与上一稳定版本</li>
+                </ul>
+              </article>
+              <article class="agent-card">
+                <div class="agent-head">
+                  <span class="agent-tag">Parallel Branch 02</span>
+                  <span class="agent-model">模型：<span id="agent-model-log" class="mono">-</span></span>
+                </div>
+                <h3>Log Agent</h3>
+                <p>归纳错误模式，判断是否存在局部数据库/配置类异常。</p>
+                <ul>
+                  <li>5xx 错误模式</li>
+                  <li>数据库连接/认证异常</li>
+                  <li>错误是否局限于目标服务</li>
+                </ul>
+              </article>
+              <article class="agent-card">
+                <div class="agent-head">
+                  <span class="agent-tag">Parallel Branch 03</span>
+                  <span class="agent-model">模型：<span id="agent-model-dependency" class="mono">-</span></span>
+                </div>
+                <h3>Dependency Agent</h3>
+                <p>排除下游依赖传播，把故障边界收敛到刚发布服务。</p>
+                <ul>
+                  <li>下游依赖健康度</li>
+                  <li>是否存在错误放大</li>
+                  <li>blast radius 是否局部可控</li>
+                </ul>
+              </article>
+            </div>
+            <div class="flow-lane">
+              <span>Triage</span>
+              <span>Parallel Branches</span>
+              <span>Planner</span>
+              <span>Critic</span>
+              <span>Policy</span>
+              <span>Approval Gate</span>
+              <span>Rollback</span>
+              <span>Verify</span>
+              <span>Report</span>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Analytics</p>
+                <h2>Metrics Breakdown</h2>
+              </div>
+              <p class="section-copy">把 Prometheus 原始指标拆成状态分布、处置结果和延迟视图。</p>
+            </div>
+            <div class="viz-grid">
+              <article class="viz-card">
+                <h3>Incident Status Distribution</h3>
+                <div id="viz-incident-status" class="viz-list empty-state">等待指标数据...</div>
+              </article>
+              <article class="viz-card">
+                <h3>Evidence by Source</h3>
+                <div id="viz-evidence-source" class="viz-list empty-state">等待指标数据...</div>
+              </article>
+              <article class="viz-card">
+                <h3>Rollback Outcomes</h3>
+                <div id="viz-rollback-outcomes" class="viz-list empty-state">等待指标数据...</div>
+              </article>
+              <article class="viz-card">
+                <h3>Recovery Outcomes</h3>
+                <div id="viz-recovery-outcomes" class="viz-list empty-state">等待指标数据...</div>
+              </article>
+            </div>
+            <div class="table-split">
+              <article class="viz-card">
+                <h3>Graph Node Avg Latency</h3>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Node</th>
+                        <th>Avg Duration</th>
+                        <th>Samples</th>
+                      </tr>
+                    </thead>
+                    <tbody id="node-latency-rows">
+                      <tr><td colspan="3" class="empty-state">等待指标数据...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+              <article class="viz-card">
+                <h3>Tool Call Avg Latency</h3>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Tool</th>
+                        <th>Avg Duration</th>
+                        <th>Samples</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tool-latency-rows">
+                      <tr><td colspan="3" class="empty-state">等待指标数据...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
+            <article class="viz-card">
+              <h3>LLM Call Breakdown</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Agent</th>
+                      <th>Model</th>
+                      <th>Status</th>
+                      <th>Calls</th>
+                    </tr>
+                  </thead>
+                  <tbody id="llm-breakdown-rows">
+                    <tr><td colspan="4" class="empty-state">等待指标数据...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
+
+          <section class="panel">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Trends</p>
+                <h2>Live Trends</h2>
+              </div>
+              <p class="section-copy">按轮询周期记录关键计数器增量，模拟大厂控制台常见的实时趋势条带。</p>
+            </div>
+            <div class="trend-grid">
+              <article class="trend-card">
+                <h3>Approval Interrupts</h3>
+                <div id="trend-interrupts" class="trend-chart empty-state">等待趋势数据...</div>
+              </article>
+              <article class="trend-card">
+                <h3>Replans</h3>
+                <div id="trend-replans" class="trend-chart empty-state">等待趋势数据...</div>
+              </article>
+              <article class="trend-card">
+                <h3>Rollbacks</h3>
+                <div id="trend-rollbacks" class="trend-chart empty-state">等待趋势数据...</div>
+              </article>
+              <article class="trend-card">
+                <h3>Recovery Checks</h3>
+                <div id="trend-recovery" class="trend-chart empty-state">等待趋势数据...</div>
+              </article>
+              <article class="trend-card">
+                <h3>LLM Calls</h3>
+                <div id="trend-llm" class="trend-chart empty-state">等待趋势数据...</div>
+              </article>
+              <article class="trend-card">
+                <h3>Audit Failures</h3>
+                <div id="trend-audit" class="trend-chart empty-state">等待趋势数据...</div>
+              </article>
+            </div>
+          </section>
+
+          <div class="split-stage">
+            <section class="panel">
+              <div class="section-head">
+                <div>
+                  <p class="section-kicker">Incident</p>
+                  <h2>Incident Snapshot</h2>
+                </div>
+                <p class="section-copy">展示当前 incident 的上下文、动作计划与恢复验证。</p>
+              </div>
+              <div class="snapshot-grid">
+                <div class="snapshot-card">
+                  <h3>Summary</h3>
+                  <div id="incident-summary" class="empty-state">运行一次模拟后，这里会显示 incident 概览。</div>
+                </div>
+                <div class="snapshot-card">
+                  <h3>Action Plan</h3>
+                  <div id="incident-action" class="empty-state">等待 Planner Agent 产出处置计划。</div>
+                </div>
+                <div class="snapshot-card">
+                  <h3>Verification</h3>
+                  <div id="incident-verification" class="empty-state">回滚执行后会显示恢复验证结果。</div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="section-head">
+                <div>
+                  <p class="section-kicker">Forensics</p>
+                  <h2>Evidence & Report</h2>
+                </div>
+                <p class="section-copy">将结构化证据与最终报告并排呈现，符合运维平台“发现 - 处置 - 复盘”的阅读路径。</p>
+              </div>
+              <div class="mini-stack">
+                <div class="subpanel">
+                  <h3>Evidence</h3>
+                  <div id="evidence-groups" class="empty-state">还没有 evidence。</div>
+                </div>
+                <div class="subpanel">
+                  <h3>Hypotheses & Report</h3>
+                  <div id="incident-report" class="empty-state">等待最终报告。</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Audit</p>
+                <h2>Agent Timeline</h2>
+              </div>
+              <p class="section-copy">按事件时间线和 agent run 审计双视图展示每一步执行。</p>
+            </div>
+            <div class="timeline-layout">
+              <div class="subpanel">
+                <h3>Events</h3>
+                <ul id="event-list" class="timeline-list">
+                  <li class="empty-state">还没有 event。</li>
+                </ul>
+              </div>
+              <div class="subpanel">
+                <h3>Agent Runs</h3>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Node</th>
+                        <th>Model</th>
+                        <th>Status</th>
+                        <th>Latency</th>
+                        <th>Prompt</th>
+                      </tr>
+                    </thead>
+                    <tbody id="agent-run-rows">
+                      <tr><td colspan="5" class="empty-state">还没有 agent run。</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <aside class="sidebar">
+          <section class="panel sidebar-panel">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Simulation</p>
+                <h2>Run Controls</h2>
+              </div>
+            </div>
+            <form id="simulation-form" class="control-form">
+              <label>
+                <span>Variant Index</span>
+                <input type="number" id="variant-index" min="0" max="18" value="0" />
+              </label>
+              <label class="checkbox-row">
+                <input type="checkbox" id="auto-approve" />
+                <span>自动批准回滚</span>
+              </label>
+              <button type="submit" class="primary-button" id="run-button">运行主场景</button>
+            </form>
+            <div class="status-note" id="simulation-status">还没有运行模拟。</div>
+          </section>
+
+          <section class="panel sidebar-panel">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Summary</p>
+                <h2>Latest Run Summary</h2>
+              </div>
+            </div>
+            <div id="latest-run-summary" class="empty-state">还没有保存的联调结果。</div>
+          </section>
+
+          <section class="panel sidebar-panel">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Reports</p>
+                <h2>History Query</h2>
+              </div>
+            </div>
+            <form id="report-query-form" class="control-form compact-form">
+              <label>
+                <span>Service Name</span>
+                <input type="text" id="report-service-name" value="order-api" />
+              </label>
+              <label>
+                <span>Status</span>
+                <select id="report-status">
+                  <option value="">All</option>
+                  <option value="recovered">Recovered</option>
+                  <option value="waiting_for_approval">Waiting For Approval</option>
+                  <option value="diagnosed">Diagnosed</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="report_ready">Report Ready</option>
+                </select>
+              </label>
+              <button type="submit" class="secondary-button">查询历史报告</button>
+            </form>
+            <div class="status-note" id="report-query-status">可按 service/status 查询过往 incident 与报告。</div>
+            <div id="report-history-results" class="empty-state">还没有查询结果。</div>
+          </section>
+
+          <section class="panel panel-approval sidebar-panel sticky-panel">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Approval</p>
+                <h2>Manual Approval</h2>
+              </div>
+            </div>
+            <div class="approval-stage" id="approval-bar">
+              <div class="approval-copy">
+                <strong id="approval-title">等待审批事件</strong>
+                <p id="approval-copy">运行主场景后，如果进入 `waiting_for_approval`，这里会显示回滚摘要，并提供批准 / 拒绝按键。</p>
+              </div>
+              <div class="approval-actions">
+                <button class="secondary-button" id="reject-button" type="button" disabled>拒绝回滚</button>
+                <button class="primary-button" id="approve-button" type="button" disabled>批准回滚</button>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+
+    <script src="/demo/assets/app.js"></script>
+  </body>
+</html>

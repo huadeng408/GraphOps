@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -48,9 +49,16 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request, toolName st
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.ServiceName == "" || req.ScenarioKey == "" {
+	if req.PlaybookKey == "" {
+		req.PlaybookKey = "release_config_regression"
+	}
+	if req.TimeWindowMinutes == 0 {
+		req.TimeWindowMinutes = 120
+	}
+	if strings.TrimSpace(req.ServiceName) == "" || req.IncidentContext == nil ||
+		strings.TrimSpace(req.IncidentContext.Cluster) == "" || strings.TrimSpace(req.IncidentContext.Namespace) == "" {
 		observeToolCall(toolName, "bad_request", started)
-		writeError(w, http.StatusBadRequest, "service_name and scenario_key are required")
+		writeError(w, http.StatusBadRequest, "service_name plus incident_context.cluster and incident_context.namespace are required")
 		return
 	}
 
@@ -72,9 +80,12 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.IncidentID == "" || req.TargetService == "" || req.ScenarioKey == "" || req.IdempotencyKey == "" {
+	if req.PlaybookKey == "" {
+		req.PlaybookKey = "release_config_regression"
+	}
+	if req.IncidentID == "" || req.TargetService == "" || req.IdempotencyKey == "" || req.CurrentRevision == "" || req.TargetRevision == "" {
 		observeToolCall("rollback", "bad_request", started)
-		writeError(w, http.StatusBadRequest, "incident_id, target_service, scenario_key, idempotency_key are required")
+		writeError(w, http.StatusBadRequest, "incident_id, target_service, current_revision, target_revision, and idempotency_key are required")
 		return
 	}
 
@@ -96,9 +107,12 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.IncidentID == "" || req.ServiceName == "" || req.ScenarioKey == "" {
+	if req.PlaybookKey == "" {
+		req.PlaybookKey = "release_config_regression"
+	}
+	if req.IncidentID == "" || req.ServiceName == "" || req.IncidentContext == nil {
 		observeToolCall("verify", "bad_request", started)
-		writeError(w, http.StatusBadRequest, "incident_id, service_name, scenario_key are required")
+		writeError(w, http.StatusBadRequest, "incident_id, service_name, and incident_context are required")
 		return
 	}
 

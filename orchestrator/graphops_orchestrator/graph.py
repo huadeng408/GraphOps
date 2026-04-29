@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from graphops_orchestrator.clients import IncidentAPIClient, OpsGatewayClient
 from graphops_orchestrator.llm import BaseReasoner, build_reasoner_from_env
-from graphops_orchestrator.logic import build_evidence
+from graphops_orchestrator.logic import build_evidence, plan_diagnosis
 from graphops_orchestrator.models import (
     ActionPlan,
     ActionReceipt,
@@ -22,8 +22,12 @@ from graphops_orchestrator.models import (
 )
 from graphops_orchestrator.prompts import PROMPT_VERSIONS
 from graphops_orchestrator.telemetry import (
+    audit_write_failures_total,
     approval_wait_duration_seconds,
+    evidence_items_total,
+    graph_interrupts_total,
     graph_node_duration_seconds,
+    graph_replans_total,
     incident_runs_total,
     measure_span,
 )
@@ -34,7 +38,8 @@ class GraphState(TypedDict, total=False):
     service_name: str
     severity: str
     alert_summary: str
-    scenario_key: str
+    playbook_key: str
+    incident_context: dict[str, Any] | None
     triage_decision: dict[str, Any] | None
     change_evidence: list[dict[str, Any]]
     log_evidence: list[dict[str, Any]]
@@ -115,7 +120,7 @@ class GraphRunner:
 
     def _scenario_type(self, values: dict[str, Any]) -> str:
         triage_decision = values.get("triage_decision") or {}
-        return triage_decision.get("incident_type") or values.get("scenario_key", "unknown")
+        return triage_decision.get("incident_type") or values.get("playbook_key", "unknown")
 
     def _record_run_metric(self, values: dict[str, Any], interrupt_payload: dict[str, Any] | None) -> str:
         status = determine_status(values, interrupt_payload)
@@ -146,6 +151,7 @@ class GraphRunner:
             )
         except Exception:
             # Audit must not break the incident workflow.
+            audit_write_failures_total.labels("event").inc()
             return
 
     async def _record_agent_run(
@@ -159,11 +165,12 @@ class GraphRunner:
         input_payload: dict[str, Any],
         output_payload: dict[str, Any],
     ) -> None:
+        model_name = self.reasoner.model_name_for_agent(node_name)
         try:
             await self.incident_client.add_agent_run(
                 incident_id,
                 node_name=node_name,
-                model_name=self.reasoner.model_name,
+                model_name=model_name,
                 prompt_version=prompt_version,
                 status=status,
                 latency_ms=latency_ms,
@@ -172,6 +179,7 @@ class GraphRunner:
                 output_payload=self._to_jsonable(output_payload),
             )
         except Exception:
+            audit_write_failures_total.labels("agent_run").inc()
             return
 
     async def _run_agent(
@@ -189,7 +197,10 @@ class GraphRunner:
             event_type="agent_started",
             actor_type="agent",
             actor_name=node_name,
-            payload={"prompt_version": prompt_version},
+            payload={
+                "prompt_version": prompt_version,
+                "model_name": self.reasoner.model_name_for_agent(node_name),
+            },
         )
         try:
             with measure_span("graph_node", node_name=node_name):
@@ -210,7 +221,10 @@ class GraphRunner:
                 event_type="agent_completed",
                 actor_type="agent",
                 actor_name=node_name,
-                payload={"latency_ms": latency_ms},
+                payload={
+                    "latency_ms": latency_ms,
+                    "model_name": self.reasoner.model_name_for_agent(node_name),
+                },
             )
             return output
         except Exception as exc:
@@ -230,7 +244,11 @@ class GraphRunner:
                 event_type="agent_failed",
                 actor_type="agent",
                 actor_name=node_name,
-                payload={"latency_ms": latency_ms, "error": str(exc)},
+                payload={
+                    "latency_ms": latency_ms,
+                    "error": str(exc),
+                    "model_name": self.reasoner.model_name_for_agent(node_name),
+                },
             )
             raise
 
@@ -255,13 +273,14 @@ class GraphRunner:
                 event_type="incident_loaded",
                 actor_type="system",
                 actor_name="load_incident",
-                payload={"scenario_key": incident.scenario_key},
+                payload={"playbook_key": incident.playbook_key},
             )
             return {
                 "service_name": incident.service_name,
                 "severity": incident.severity,
                 "alert_summary": incident.alert_summary,
-                "scenario_key": incident.scenario_key,
+                "playbook_key": incident.playbook_key,
+                "incident_context": incident.context.model_dump() if incident.context else None,
                 "replan_count": 0,
             }
 
@@ -271,7 +290,8 @@ class GraphRunner:
                 "service_name": state["service_name"],
                 "severity": state["severity"],
                 "alert_summary": state["alert_summary"],
-                "scenario_key": state["scenario_key"],
+                "playbook_key": state["playbook_key"],
+                "incident_context": state.get("incident_context"),
             }
             decision = await self._run_agent(
                 state["incident_id"],
@@ -284,12 +304,16 @@ class GraphRunner:
 
         async def change_agent(state: GraphState) -> GraphState:
             response = await self.ops_client.query_changes(
-                state["incident_id"], state["service_name"], state["scenario_key"]
+                state["incident_id"],
+                state["service_name"],
+                state["playbook_key"],
+                state.get("incident_context") or {},
             )
             payload = {
                 "service_name": state["service_name"],
                 "alert_summary": state["alert_summary"],
-                "scenario_key": state["scenario_key"],
+                "playbook_key": state["playbook_key"],
+                "incident_context": state.get("incident_context"),
                 "triage_decision": state.get("triage_decision"),
                 "items": [item.model_dump() for item in response.items],
             }
@@ -305,16 +329,21 @@ class GraphRunner:
                 [item.model_dump() for item in result.findings],
                 "chg",
             )
+            evidence_items_total.labels("change").inc(len(evidence))
             return {"change_evidence": [item.model_dump() for item in evidence]}
 
         async def log_agent(state: GraphState) -> GraphState:
             response = await self.ops_client.query_logs(
-                state["incident_id"], state["service_name"], state["scenario_key"]
+                state["incident_id"],
+                state["service_name"],
+                state["playbook_key"],
+                state.get("incident_context") or {},
             )
             payload = {
                 "service_name": state["service_name"],
                 "alert_summary": state["alert_summary"],
-                "scenario_key": state["scenario_key"],
+                "playbook_key": state["playbook_key"],
+                "incident_context": state.get("incident_context"),
                 "triage_decision": state.get("triage_decision"),
                 "items": [item.model_dump() for item in response.items],
             }
@@ -330,16 +359,21 @@ class GraphRunner:
                 [item.model_dump() for item in result.findings],
                 "log",
             )
+            evidence_items_total.labels("log").inc(len(evidence))
             return {"log_evidence": [item.model_dump() for item in evidence]}
 
         async def dependency_agent(state: GraphState) -> GraphState:
             response = await self.ops_client.query_dependencies(
-                state["incident_id"], state["service_name"], state["scenario_key"]
+                state["incident_id"],
+                state["service_name"],
+                state["playbook_key"],
+                state.get("incident_context") or {},
             )
             payload = {
                 "service_name": state["service_name"],
                 "alert_summary": state["alert_summary"],
-                "scenario_key": state["scenario_key"],
+                "playbook_key": state["playbook_key"],
+                "incident_context": state.get("incident_context"),
                 "triage_decision": state.get("triage_decision"),
                 "items": [item.model_dump() for item in response.items],
             }
@@ -355,6 +389,7 @@ class GraphRunner:
                 [item.model_dump() for item in result.findings],
                 "dep",
             )
+            evidence_items_total.labels("dependency").inc(len(evidence))
             return {"dependency_evidence": [item.model_dump() for item in evidence]}
 
         async def planner_agent(state: GraphState) -> GraphState:
@@ -362,6 +397,8 @@ class GraphRunner:
                 "incident_id": state["incident_id"],
                 "service_name": state["service_name"],
                 "severity": state["severity"],
+                "incident_context": state.get("incident_context"),
+                "playbook_key": state.get("playbook_key", ""),
                 "triage_decision": state.get("triage_decision"),
                 "change_evidence": state.get("change_evidence", []),
                 "log_evidence": state.get("log_evidence", []),
@@ -376,6 +413,12 @@ class GraphRunner:
                 input_payload=payload,
                 fn=lambda: self.reasoner.plan(payload),
             )
+            change_evidence_models = [Evidence.model_validate(item) for item in state.get("change_evidence", [])]
+            log_evidence_models = [Evidence.model_validate(item) for item in state.get("log_evidence", [])]
+            dependency_evidence_models = [
+                Evidence.model_validate(item) for item in state.get("dependency_evidence", [])
+            ]
+
             hypotheses = [
                 Hypothesis(
                     hypothesis_id=f"hyp-{index}",
@@ -390,10 +433,41 @@ class GraphRunner:
                 action = ActionPlan(
                     action_type=decision.proposed_action.action_type,
                     target_service=decision.proposed_action.target_service,
+                    current_revision=decision.proposed_action.current_revision,
+                    target_revision=decision.proposed_action.target_revision,
                     reason=decision.proposed_action.reason,
+                    risk_level=decision.proposed_action.risk_level,
                     evidence_ids=list(decision.proposed_action.evidence_ids),
+                    verification_policy=(
+                        decision.proposed_action.verification_policy
+                        if decision.proposed_action.verification_policy is not None
+                        else None
+                    ),
                     requires_approval=decision.proposed_action.requires_approval,
                 )
+
+            if not hypotheses or action is None:
+                incident_context = state.get("incident_context") or {}
+                fallback_hypotheses, fallback_action = plan_diagnosis(
+                    state["service_name"],
+                    str(incident_context.get("release_version", "")),
+                    str(incident_context.get("previous_version", "")),
+                    change_evidence_models,
+                    log_evidence_models,
+                    dependency_evidence_models,
+                )
+                if not hypotheses:
+                    hypotheses = fallback_hypotheses
+                if action is None and fallback_action is not None:
+                    action = fallback_action
+                    fallback_note = "Guardrail fallback populated rollback action from strong release-regression evidence."
+                    decision = decision.model_copy(
+                        update={
+                            "investigation_notes": (
+                                f"{decision.investigation_notes}\n{fallback_note}".strip()
+                            )
+                        }
+                    )
             evidence_payload = [
                 item
                 for item in [
@@ -419,6 +493,7 @@ class GraphRunner:
             payload = {
                 "service_name": state["service_name"],
                 "severity": state["severity"],
+                "incident_context": state.get("incident_context"),
                 "triage_decision": state.get("triage_decision"),
                 "change_evidence": state.get("change_evidence", []),
                 "log_evidence": state.get("log_evidence", []),
@@ -438,6 +513,7 @@ class GraphRunner:
             next_replan = state.get("replan_count", 0)
             if verdict.decision == "request_replan":
                 next_replan += 1
+                graph_replans_total.labels(verdict.reason or "critic_requested_replan").inc()
             return {
                 "critic_verdict": verdict.model_dump(),
                 "planner_feedback": verdict.reason,
@@ -448,6 +524,7 @@ class GraphRunner:
             payload = {
                 "service_name": state["service_name"],
                 "severity": state["severity"],
+                "incident_context": state.get("incident_context"),
                 "hypotheses": state.get("hypotheses", []),
                 "proposed_action": state.get("proposed_action"),
                 "critic_verdict": state.get("critic_verdict"),
@@ -464,10 +541,12 @@ class GraphRunner:
 
         async def approval_gate(state: GraphState) -> GraphState:
             started = time.perf_counter()
+            graph_interrupts_total.labels("approval_gate").inc()
             decision = interrupt(
                 {
                     "incident_id": state["incident_id"],
                     "service_name": state["service_name"],
+                    "playbook_key": state["playbook_key"],
                     "proposed_action": state["proposed_action"],
                     "policy_decision": state.get("policy_decision"),
                 }
@@ -491,17 +570,31 @@ class GraphRunner:
             )
             response = await self.ops_client.rollback(
                 incident_id=state["incident_id"],
-                scenario_key=state["scenario_key"],
+                playbook_key=state["playbook_key"],
+                incident_context=state.get("incident_context") or {},
                 target_service=action.target_service,
+                current_revision=action.current_revision,
+                target_revision=action.target_revision,
+                risk_level=action.risk_level,
                 idempotency_key=idempotency_key,
                 requested_by=reviewer,
+                verification_policy=action.verification_policy,
             )
             receipt = response.receipt.model_copy(update={"verification_status": "pending"})
             return {"action_receipt": receipt.model_dump()}
 
         async def verify_recovery(state: GraphState) -> GraphState:
+            action = (
+                ActionPlan.model_validate(state["proposed_action"])
+                if state.get("proposed_action")
+                else None
+            )
             result = await self.ops_client.verify(
-                state["incident_id"], state["service_name"], state["scenario_key"]
+                state["incident_id"],
+                state["service_name"],
+                state["playbook_key"],
+                state.get("incident_context") or {},
+                action.verification_policy if action else None,
             )
             receipt_payload = state.get("action_receipt")
             if receipt_payload:
@@ -517,6 +610,7 @@ class GraphRunner:
             payload = {
                 "service_name": state["service_name"],
                 "severity": state["severity"],
+                "incident_context": state.get("incident_context"),
                 "triage_decision": state.get("triage_decision"),
                 "hypotheses": state.get("hypotheses", []),
                 "proposed_action": state.get("proposed_action"),
@@ -672,6 +766,13 @@ def route_after_approval(state: GraphState) -> str:
 def determine_status(values: dict[str, Any], interrupt_payload: dict[str, Any] | None) -> str:
     if interrupt_payload is not None:
         return "waiting_for_approval"
+    if values.get("approval_status") == "rejected":
+        return "rejected"
+    verification_result = values.get("verification_result") or {}
+    if verification_result.get("status") == "recovered":
+        return "recovered"
     if values.get("final_report"):
+        if values.get("proposed_action") is None:
+            return "diagnosed"
         return "completed"
-    return "running"
+    return "diagnosing"

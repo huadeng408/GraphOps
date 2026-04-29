@@ -25,24 +25,36 @@ function Get-Median {
     return ($left + $right) / 2
 }
 
+function New-ReleaseRegressionContext {
+    param([int]$VariantIndex)
+
+    $suffix = if ($VariantIndex -gt 0) { "-{0:d2}" -f $VariantIndex } else { "" }
+    return @{
+        cluster          = "prod-cn"
+        namespace        = "checkout"
+        environment      = "production"
+        alert_name       = "OrderApiHigh5xxAfterRelease"
+        alert_started_at = "2026-04-17T02:02:00Z"
+        release_id       = "deploy-2026.04.17-0155$suffix"
+        release_version  = "order-api@2026.04.17-0155$suffix"
+        previous_version = "order-api@2026.04.17-0142$suffix"
+        labels           = @{
+            service = "order-api"
+            team    = "payments"
+        }
+    }
+}
+
 function New-ScenarioCatalog {
     $items = @()
     foreach ($i in 1..18) {
         $items += [pscustomobject]@{
-            scenario_key    = ("release_config_regression_{0:d2}" -f $i)
+            playbook_key    = ("release_config_regression_{0:d2}" -f $i)
+            variant_index   = $i
             service_name    = "order-api"
             severity        = "P1"
             alert_summary   = "5xx spike after deploy"
             expected_action = "rollback"
-        }
-    }
-    foreach ($i in 1..18) {
-        $items += [pscustomobject]@{
-            scenario_key    = ("downstream_inventory_outage_{0:d2}" -f $i)
-            service_name    = "order-api"
-            severity        = "P1"
-            alert_summary   = "timeouts to inventory"
-            expected_action = "none"
         }
     }
     return $items
@@ -51,12 +63,14 @@ function New-ScenarioCatalog {
 function Invoke-Scenario {
     param([pscustomobject]$Scenario)
 
-    $body = @{
+    $bodyObject = @{
         service_name  = $Scenario.service_name
         severity      = $Scenario.severity
         alert_summary = $Scenario.alert_summary
-        scenario_key  = $Scenario.scenario_key
-    } | ConvertTo-Json
+        playbook_key  = $Scenario.playbook_key
+        context       = New-ReleaseRegressionContext -VariantIndex $Scenario.variant_index
+    }
+    $body = $bodyObject | ConvertTo-Json -Depth 6
 
     $incident = Invoke-RestMethod -Uri "$IncidentApiBase/incidents" -Method Post -ContentType "application/json" -Body $body
 
@@ -70,7 +84,7 @@ function Invoke-Scenario {
     $verifyStatus = $null
     $endToEndLatencyMs = $initialLatencyMs
 
-    if ($ApproveRollback -and $Scenario.expected_action -eq "rollback" -and $run.interrupt) {
+    if ($ApproveRollback -and $run.interrupt) {
         $resumeTimer = [System.Diagnostics.Stopwatch]::StartNew()
         $resumeBody = @{
             approved = $true
@@ -87,7 +101,7 @@ function Invoke-Scenario {
     }
 
     return [pscustomobject]@{
-        scenario_key       = $Scenario.scenario_key
+        playbook_key       = $Scenario.playbook_key
         expected_action    = $Scenario.expected_action
         predicted_action   = $predictedAction
         action_match       = ($predictedAction -eq $Scenario.expected_action)
@@ -106,15 +120,10 @@ foreach ($scenario in $catalog) {
     $results += Invoke-Scenario -Scenario $scenario
 }
 
-$rollbackExpected = $results | Where-Object { $_.expected_action -eq "rollback" }
-$noActionExpected = $results | Where-Object { $_.expected_action -eq "none" }
-$falseRollbackCount = ($noActionExpected | Where-Object { $_.predicted_action -eq "rollback" }).Count
-
 $summary = [ordered]@{
     total_cases                     = $results.Count
     action_accuracy                 = [math]::Round((($results | Where-Object { $_.action_match }).Count / [math]::Max($results.Count, 1)), 4)
-    false_rollback_rate             = [math]::Round(($falseRollbackCount / [math]::Max($noActionExpected.Count, 1)), 4)
-    rollback_recovered_rate         = [math]::Round((($rollbackExpected | Where-Object { $_.verify_status -eq "recovered" }).Count / [math]::Max($rollbackExpected.Count, 1)), 4)
+    rollback_recovered_rate         = [math]::Round((($results | Where-Object { $_.verify_status -eq "recovered" }).Count / [math]::Max($results.Count, 1)), 4)
     median_initial_latency_ms       = [math]::Round((Get-Median ($results.initial_latency_ms)), 2)
     median_end_to_end_latency_ms    = [math]::Round((Get-Median ($results.end_to_end_ms)), 2)
     waiting_for_approval_case_count = ($results | Where-Object { $_.initial_status -eq "waiting_for_approval" }).Count

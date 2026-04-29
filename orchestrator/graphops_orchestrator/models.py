@@ -3,12 +3,25 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class IncidentContext(BaseModel):
+    cluster: str
+    namespace: str
+    environment: str
+    alert_name: str
+    alert_started_at: str
+    release_id: str
+    release_version: str
+    previous_version: str
+    labels: dict[str, str] = Field(default_factory=dict)
+
+
 class Incident(BaseModel):
     id: str
     service_name: str
     severity: str
     alert_summary: str
-    scenario_key: str
+    playbook_key: str = ""
+    context: IncidentContext | None = None
     status: str
 
 
@@ -27,11 +40,22 @@ class Hypothesis(BaseModel):
     confidence: float
 
 
+class VerificationPolicy(BaseModel):
+    window_minutes: int
+    max_error_rate: float
+    max_p95_latency_ms: int
+    minimum_passing_signals: int
+
+
 class ActionPlan(BaseModel):
     action_type: str
     target_service: str
+    current_revision: str
+    target_revision: str
     reason: str
+    risk_level: str
     evidence_ids: list[str] = Field(default_factory=list)
+    verification_policy: VerificationPolicy | None = None
     requires_approval: bool
 
 
@@ -40,15 +64,32 @@ class ActionReceipt(BaseModel):
     idempotency_key: str
     action_type: str
     target_service: str
+    executor: str
+    from_revision: str
+    to_revision: str
     status: str
+    status_detail: str
     executed_at: str
     verification_status: str = ""
+
+
+class SignalCheck(BaseModel):
+    name: str
+    query_ref: str
+    observed_value: float
+    threshold: str
+    passed: bool
+    summary: str
 
 
 class VerificationResult(BaseModel):
     status: str
     error_rate: float
     p95_latency_ms: int
+    window_minutes: int
+    query_refs: list[str] = Field(default_factory=list)
+    signal_checks: list[SignalCheck] = Field(default_factory=list)
+    decision_basis: str
     summary: str
 
 

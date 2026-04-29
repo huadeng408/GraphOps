@@ -85,7 +85,7 @@ $gateway = Start-Process -FilePath "powershell.exe" -ArgumentList @(
 $orchestrator = Start-Process -FilePath "powershell.exe" -ArgumentList @(
     "-NoProfile",
     "-Command",
-    "`$env:INCIDENT_API_URL='http://127.0.0.1:8082'; `$env:OPS_GATEWAY_URL='http://127.0.0.1:8085'; `$env:CHECKPOINTER_BACKEND='sqlite'; `$env:CHECKPOINTER_SQLITE_PATH='$root\orchestrator\data\langgraph.sqlite'; if (`$env:REDIS_URL) { `$env:REDIS_URL=`$env:REDIS_URL }; if (-not `$env:REASONER_PROVIDER) { `$env:REASONER_PROVIDER='ollama' }; if (-not `$env:OLLAMA_MODEL) { `$env:OLLAMA_MODEL='qwen3:4b' }; Set-Location '$root\orchestrator'; python -m uvicorn graphops_orchestrator.app:app --host 127.0.0.1 --port 8090"
+    "`$env:INCIDENT_API_URL='http://127.0.0.1:8082'; `$env:OPS_GATEWAY_URL='http://127.0.0.1:8085'; `$env:CHECKPOINTER_BACKEND='sqlite'; `$env:CHECKPOINTER_SQLITE_PATH='$root\orchestrator\data\langgraph.sqlite'; if (`$env:REDIS_URL) { `$env:REDIS_URL=`$env:REDIS_URL }; if (-not `$env:REASONER_PROVIDER) { `$env:REASONER_PROVIDER='ollama' }; if (-not `$env:OLLAMA_MAIN_MODEL) { if (`$env:OLLAMA_MODEL) { `$env:OLLAMA_MAIN_MODEL=`$env:OLLAMA_MODEL } else { `$env:OLLAMA_MAIN_MODEL='qwen3:4b' } }; if (-not `$env:OLLAMA_PARALLEL_MODEL) { `$env:OLLAMA_PARALLEL_MODEL='qwen3:1.7b' }; if (-not `$env:OLLAMA_NUM_CTX) { `$env:OLLAMA_NUM_CTX='8192' }; if (-not `$env:OLLAMA_PARALLEL_NUM_CTX) { `$env:OLLAMA_PARALLEL_NUM_CTX=`$env:OLLAMA_NUM_CTX }; Set-Location '$root\orchestrator'; python -m uvicorn graphops_orchestrator.app:app --host 127.0.0.1 --port 8090"
 ) -RedirectStandardOutput (Join-Path $logs "orchestrator.out.log") `
   -RedirectStandardError (Join-Path $logs "orchestrator.err.log") `
   -PassThru

@@ -18,3 +18,19 @@ type redisClient interface {
 func rollbackRedisKey(req RollbackRequest) string {
 	return "idemp:rollback:" + req.IncidentID + ":" + req.TargetService
 }
+
+func resolvePlaybookKey(playbookKey string) string {
+	if playbookKey != "" {
+		return playbookKey
+	}
+	return "release_config_regression"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}

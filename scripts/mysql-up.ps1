@@ -12,13 +12,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if ($ResetData) {
-    docker compose -f "$root\compose.yaml" down -v --remove-orphans | Out-Null
+    cmd /c ('docker compose -f "{0}\compose.yaml" down -v --remove-orphans >nul 2>nul' -f $root)
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to reset mysql docker resources."
     }
 }
 
-docker compose -f "$root\compose.yaml" up -d mysql | Out-Null
+cmd /c ('docker compose -f "{0}\compose.yaml" up -d mysql >nul 2>nul' -f $root)
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to start mysql container. Check Docker Desktop / daemon status."
 }

@@ -13,7 +13,7 @@ if (-not (Test-Path -LiteralPath $migration)) {
 }
 
 $sql = Get-Content -LiteralPath $migration -Raw
-$sql | docker compose -f "$root\compose.yaml" exec -T mysql sh -lc "MYSQL_PWD=graphops_root mysql -uroot graphops"
+$sql | docker compose -f "$root\compose.yaml" exec -T mysql sh -lc "MYSQL_PWD=graphops_root mysql -uroot graphops" 2>$null
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to apply mysql migration."
 }

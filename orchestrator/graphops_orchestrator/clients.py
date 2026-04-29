@@ -10,6 +10,7 @@ from graphops_orchestrator.models import (
     Incident,
     RollbackResponse,
     ToolResponse,
+    VerificationPolicy,
     VerificationResult,
 )
 from graphops_orchestrator.telemetry import measure_span, tool_call_duration_seconds
@@ -22,6 +23,14 @@ class IncidentAPIClient:
     async def get_incident(self, incident_id: str) -> Incident:
         payload = await self._request("GET", f"/incidents/{incident_id}")
         return Incident.model_validate(payload)
+
+    async def list_events(self, incident_id: str) -> list[dict[str, Any]]:
+        payload = await self._request("GET", f"/incidents/{incident_id}/events")
+        return list(payload.get("items", []))
+
+    async def list_agent_runs(self, incident_id: str) -> list[dict[str, Any]]:
+        payload = await self._request("GET", f"/incidents/{incident_id}/agent-runs")
+        return list(payload.get("items", []))
 
     async def approve(self, incident_id: str, reviewer: str, comment: str) -> dict[str, Any]:
         return await self._request(
@@ -120,22 +129,66 @@ class OpsGatewayClient:
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
 
-    async def query_changes(self, incident_id: str, service_name: str, scenario_key: str) -> ToolResponse:
-        return await self._query_tool("changes", "/tools/changes/query", incident_id, service_name, scenario_key)
+    async def query_changes(
+        self,
+        incident_id: str,
+        service_name: str,
+        playbook_key: str,
+        incident_context: dict[str, Any],
+    ) -> ToolResponse:
+        return await self._query_tool(
+            "changes",
+            "/tools/changes/query",
+            incident_id,
+            service_name,
+            playbook_key,
+            incident_context,
+        )
 
-    async def query_logs(self, incident_id: str, service_name: str, scenario_key: str) -> ToolResponse:
-        return await self._query_tool("logs", "/tools/logs/query", incident_id, service_name, scenario_key)
+    async def query_logs(
+        self,
+        incident_id: str,
+        service_name: str,
+        playbook_key: str,
+        incident_context: dict[str, Any],
+    ) -> ToolResponse:
+        return await self._query_tool(
+            "logs",
+            "/tools/logs/query",
+            incident_id,
+            service_name,
+            playbook_key,
+            incident_context,
+        )
 
-    async def query_dependencies(self, incident_id: str, service_name: str, scenario_key: str) -> ToolResponse:
-        return await self._query_tool("dependency", "/tools/dependency/query", incident_id, service_name, scenario_key)
+    async def query_dependencies(
+        self,
+        incident_id: str,
+        service_name: str,
+        playbook_key: str,
+        incident_context: dict[str, Any],
+    ) -> ToolResponse:
+        return await self._query_tool(
+            "dependency",
+            "/tools/dependency/query",
+            incident_id,
+            service_name,
+            playbook_key,
+            incident_context,
+        )
 
     async def rollback(
         self,
         incident_id: str,
-        scenario_key: str,
+        playbook_key: str,
+        incident_context: dict[str, Any],
         target_service: str,
+        current_revision: str,
+        target_revision: str,
+        risk_level: str,
         idempotency_key: str,
         requested_by: str,
+        verification_policy: VerificationPolicy | None,
     ) -> RollbackResponse:
         payload = await self._request_with_metrics(
             tool_name="rollback",
@@ -143,15 +196,27 @@ class OpsGatewayClient:
             path="/actions/rollback",
             json={
                 "incident_id": incident_id,
-                "scenario_key": scenario_key,
+                "playbook_key": playbook_key,
+                "incident_context": incident_context,
                 "target_service": target_service,
+                "current_revision": current_revision,
+                "target_revision": target_revision,
+                "risk_level": risk_level,
                 "idempotency_key": idempotency_key,
                 "requested_by": requested_by,
+                "verification_policy": verification_policy.model_dump() if verification_policy else None,
             },
         )
         return RollbackResponse.model_validate(payload)
 
-    async def verify(self, incident_id: str, service_name: str, scenario_key: str) -> VerificationResult:
+    async def verify(
+        self,
+        incident_id: str,
+        service_name: str,
+        playbook_key: str,
+        incident_context: dict[str, Any],
+        verification_policy: VerificationPolicy | None,
+    ) -> VerificationResult:
         payload = await self._request_with_metrics(
             tool_name="verify",
             method="POST",
@@ -159,7 +224,9 @@ class OpsGatewayClient:
             json={
                 "incident_id": incident_id,
                 "service_name": service_name,
-                "scenario_key": scenario_key,
+                "playbook_key": playbook_key,
+                "incident_context": incident_context,
+                "verification_policy": verification_policy.model_dump() if verification_policy else None,
             },
         )
         return VerificationResult.model_validate(payload)
@@ -170,7 +237,8 @@ class OpsGatewayClient:
         path: str,
         incident_id: str,
         service_name: str,
-        scenario_key: str,
+        playbook_key: str,
+        incident_context: dict[str, Any],
     ) -> ToolResponse:
         payload = await self._request_with_metrics(
             tool_name=tool_name,
@@ -179,7 +247,8 @@ class OpsGatewayClient:
             json={
                 "incident_id": incident_id,
                 "service_name": service_name,
-                "scenario_key": scenario_key,
+                "playbook_key": playbook_key,
+                "incident_context": incident_context,
                 "time_window_minutes": 120,
             },
         )

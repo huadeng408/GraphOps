@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class TriageDecision(BaseModel):
-    workflow: Literal["post_release_incident", "observe_only"] = "post_release_incident"
+    workflow: Literal["post_release_incident", "dependency_investigation", "observe_only"] = "post_release_incident"
     incident_type: Literal["release_regression", "downstream_dependency", "unknown"] = "unknown"
     reason: str
 
@@ -29,10 +29,14 @@ class PlannerHypothesis(BaseModel):
 
 
 class PlannerAction(BaseModel):
-    action_type: Literal["rollback", "degrade", "none"]
+    action_type: Literal["rollback", "none"]
     target_service: str
+    current_revision: str
+    target_revision: str
     reason: str
+    risk_level: Literal["medium", "high"] = "high"
     evidence_ids: list[str] = Field(default_factory=list)
+    verification_policy: dict | None = None
     requires_approval: bool = False
 
 

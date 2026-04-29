@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -18,27 +19,34 @@ func NewMySQLStore(db *sql.DB) *MySQLStore {
 
 func (s *MySQLStore) CreateIncident(req CreateIncidentRequest) (*Incident, error) {
 	now := time.Now().UTC()
+	contextPayload, err := marshalJSON(req.Context)
+	if err != nil {
+		return nil, err
+	}
+
 	incident := &Incident{
 		ID:           fmt.Sprintf("inc-%d", now.UnixNano()),
 		ServiceName:  req.ServiceName,
 		Severity:     req.Severity,
 		AlertSummary: req.AlertSummary,
-		ScenarioKey:  req.ScenarioKey,
+		PlaybookKey:  req.PlaybookKey,
+		Context:      cloneIncidentContext(req.Context),
 		Status:       "created",
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 
-	_, err := s.db.ExecContext(
+	_, err = s.db.ExecContext(
 		context.Background(),
 		`INSERT INTO incidents (
-			id, service_name, severity, alert_summary, scenario_key, status, analysis_json, report_json, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+			id, service_name, severity, alert_summary, playbook_key, context_json, status, analysis_json, report_json, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
 		incident.ID,
 		incident.ServiceName,
 		incident.Severity,
 		incident.AlertSummary,
-		incident.ScenarioKey,
+		incident.PlaybookKey,
+		contextPayload,
 		incident.Status,
 		incident.CreatedAt,
 		incident.UpdatedAt,
@@ -52,13 +60,14 @@ func (s *MySQLStore) CreateIncident(req CreateIncidentRequest) (*Incident, error
 func (s *MySQLStore) GetIncident(id string) (*Incident, error) {
 	row := s.db.QueryRowContext(
 		context.Background(),
-		`SELECT id, service_name, severity, alert_summary, scenario_key, status, analysis_json, report_json, created_at, updated_at
+		`SELECT id, service_name, severity, alert_summary, playbook_key, context_json, status, analysis_json, report_json, created_at, updated_at
 		 FROM incidents
 		 WHERE id = ?`,
 		id,
 	)
 
 	var incident Incident
+	var contextJSON sql.NullString
 	var analysisJSON sql.NullString
 	var reportJSON sql.NullString
 
@@ -67,7 +76,8 @@ func (s *MySQLStore) GetIncident(id string) (*Incident, error) {
 		&incident.ServiceName,
 		&incident.Severity,
 		&incident.AlertSummary,
-		&incident.ScenarioKey,
+		&incident.PlaybookKey,
+		&contextJSON,
 		&incident.Status,
 		&analysisJSON,
 		&reportJSON,
@@ -78,6 +88,14 @@ func (s *MySQLStore) GetIncident(id string) (*Incident, error) {
 			return nil, errIncidentNotFound
 		}
 		return nil, err
+	}
+
+	if contextJSON.Valid && contextJSON.String != "" {
+		var incidentContext IncidentContext
+		if err := json.Unmarshal([]byte(contextJSON.String), &incidentContext); err != nil {
+			return nil, err
+		}
+		incident.Context = &incidentContext
 	}
 
 	if analysisJSON.Valid && analysisJSON.String != "" {
@@ -105,6 +123,153 @@ func (s *MySQLStore) GetIncident(id string) (*Incident, error) {
 	return &incident, nil
 }
 
+func (s *MySQLStore) ListIncidents(req ListIncidentsRequest) ([]Incident, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := `SELECT id FROM incidents`
+	args := make([]any, 0, 3)
+	conditions := make([]string, 0, 2)
+	if req.ServiceName != "" {
+		conditions = append(conditions, "service_name = ?")
+		args = append(args, req.ServiceName)
+	}
+	if req.Status != "" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, req.Status)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(context.Background(), query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]Incident, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		incident, err := s.GetIncident(id)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *incident)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *MySQLStore) ListEvents(id string) ([]IncidentEvent, error) {
+	rows, err := s.db.QueryContext(
+		context.Background(),
+		`SELECT id, incident_id, event_type, actor_type, actor_name, payload_json, created_at
+		 FROM incident_events
+		 WHERE incident_id = ?
+		 ORDER BY id ASC`,
+		id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]IncidentEvent, 0)
+	for rows.Next() {
+		var item IncidentEvent
+		var payloadJSON string
+		if err := rows.Scan(
+			&item.ID,
+			&item.IncidentID,
+			&item.EventType,
+			&item.ActorType,
+			&item.ActorName,
+			&payloadJSON,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if payloadJSON != "" {
+			if err := json.Unmarshal([]byte(payloadJSON), &item.Payload); err != nil {
+				return nil, err
+			}
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetIncident(id); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *MySQLStore) ListAgentRuns(id string) ([]AgentRun, error) {
+	rows, err := s.db.QueryContext(
+		context.Background(),
+		`SELECT id, incident_id, node_name, model_name, prompt_version, input_json, output_json, latency_ms, status, checkpoint_id, created_at
+		 FROM agent_runs
+		 WHERE incident_id = ?
+		 ORDER BY id ASC`,
+		id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]AgentRun, 0)
+	for rows.Next() {
+		var item AgentRun
+		var inputJSON string
+		var outputJSON string
+		if err := rows.Scan(
+			&item.ID,
+			&item.IncidentID,
+			&item.NodeName,
+			&item.ModelName,
+			&item.PromptVersion,
+			&inputJSON,
+			&outputJSON,
+			&item.LatencyMs,
+			&item.Status,
+			&item.CheckpointID,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if inputJSON != "" {
+			if err := json.Unmarshal([]byte(inputJSON), &item.Input); err != nil {
+				return nil, err
+			}
+		}
+		if outputJSON != "" {
+			if err := json.Unmarshal([]byte(outputJSON), &item.Output); err != nil {
+				return nil, err
+			}
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetIncident(id); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (s *MySQLStore) SaveAnalysis(id string, req UpsertAnalysisRequest) (*Incident, error) {
 	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -115,7 +280,7 @@ func (s *MySQLStore) SaveAnalysis(id string, req UpsertAnalysisRequest) (*Incide
 
 	status := "diagnosed"
 	if req.ProposedAction != nil && req.ProposedAction.RequiresApproval {
-		status = "awaiting_approval"
+		status = "waiting_for_approval"
 	}
 
 	analysis := AnalysisSnapshot{
@@ -345,4 +510,15 @@ func (s *MySQLStore) RecordAgentRun(id string, req RecordAgentRunRequest) error 
 		return errIncidentNotFound
 	}
 	return nil
+}
+
+func marshalJSON(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return string(payload), nil
 }

@@ -26,6 +26,21 @@ approval_wait_duration_seconds = Histogram(
     "approval_wait_duration_seconds",
     "Time spent waiting for human approval.",
 )
+graph_interrupts_total = Counter(
+    "graph_interrupts_total",
+    "Total graph interrupts raised for human approval.",
+    labelnames=("node",),
+)
+graph_replans_total = Counter(
+    "graph_replans_total",
+    "Total replan requests issued by the critic agent.",
+    labelnames=("reason",),
+)
+evidence_items_total = Counter(
+    "evidence_items_total",
+    "Total structured evidence items produced by evidence agents.",
+    labelnames=("source_type",),
+)
 incident_runs_total = Counter(
     "incident_runs_total",
     "Total incident runs by final status.",
@@ -40,6 +55,11 @@ llm_duration_seconds = Histogram(
     "llm_duration_seconds",
     "LLM call latency by agent and model.",
     labelnames=("agent", "model", "status"),
+)
+audit_write_failures_total = Counter(
+    "audit_write_failures_total",
+    "Total audit writes that failed but were downgraded to best effort.",
+    labelnames=("record_type",),
 )
 
 
