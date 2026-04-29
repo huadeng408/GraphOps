@@ -626,6 +626,26 @@ class GraphRunner:
                 input_payload=payload,
                 fn=lambda: self.reasoner.report(payload),
             )
+            if state.get("verification_result"):
+                verification_result = VerificationResult.model_validate(state["verification_result"])
+                anomaly_summary = list(report.anomaly_summary)
+                handling_suggestions = list(report.handling_suggestions)
+                for item in verification_result.anomalies:
+                    description = f"[{item.severity}] {item.description}"
+                    if description not in anomaly_summary:
+                        anomaly_summary.append(description)
+                    suggestion = item.handling_suggestion.strip()
+                    if suggestion and suggestion not in handling_suggestions:
+                        handling_suggestions.append(suggestion)
+                report = report.model_copy(
+                    update={
+                        "metrics": verification_result.metrics,
+                        "release_comparisons": verification_result.release_comparisons,
+                        "anomalies": verification_result.anomalies,
+                        "anomaly_summary": anomaly_summary,
+                        "handling_suggestions": handling_suggestions,
+                    }
+                )
             if state.get("action_receipt"):
                 report = report.model_copy(
                     update={"action_receipt": ActionReceipt.model_validate(state["action_receipt"])}
@@ -674,6 +694,7 @@ class GraphRunner:
             {
                 "approval_gate": "approval_gate",
                 "rollback_action": "rollback_action",
+                "verify_recovery": "verify_recovery",
                 "finalize_report": "finalize_report",
             },
         )
@@ -682,6 +703,7 @@ class GraphRunner:
             route_after_approval,
             {
                 "rollback_action": "rollback_action",
+                "verify_recovery": "verify_recovery",
                 "finalize_report": "finalize_report",
             },
         )
@@ -751,7 +773,7 @@ def route_after_critic(state: GraphState) -> str:
 def route_after_policy(state: GraphState) -> str:
     decision = state.get("policy_decision") or {}
     if state.get("proposed_action") is None or decision.get("decision") == "deny":
-        return "finalize_report"
+        return "verify_recovery"
     if decision.get("decision") == "allow":
         return "rollback_action"
     return "approval_gate"
@@ -760,7 +782,7 @@ def route_after_policy(state: GraphState) -> str:
 def route_after_approval(state: GraphState) -> str:
     if state.get("approval_status") == "approved":
         return "rollback_action"
-    return "finalize_report"
+    return "verify_recovery"
 
 
 def determine_status(values: dict[str, Any], interrupt_payload: dict[str, Any] | None) -> str:

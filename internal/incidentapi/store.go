@@ -288,6 +288,11 @@ func cloneIncident(in *Incident) *Incident {
 	}
 	if in.Report != nil {
 		report := *in.Report
+		report.AnomalySummary = append([]string(nil), in.Report.AnomalySummary...)
+		report.HandlingSuggestions = append([]string(nil), in.Report.HandlingSuggestions...)
+		report.Metrics = append([]MetricObservation(nil), in.Report.Metrics...)
+		report.ReleaseComparisons = append([]MetricComparison(nil), in.Report.ReleaseComparisons...)
+		report.Anomalies = append([]AnomalyFinding(nil), in.Report.Anomalies...)
 		if in.Report.ActionReceipt != nil {
 			receipt := *in.Report.ActionReceipt
 			report.ActionReceipt = &receipt

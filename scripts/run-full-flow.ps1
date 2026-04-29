@@ -363,6 +363,10 @@ $verificationMetric = Invoke-PrometheusQuery -Query "recovery_verification_total
 $graphNodeMetric = Invoke-PrometheusQuery -Query "sum by (node) (graph_node_duration_seconds_count)"
 $toolCallMetric = Invoke-PrometheusQuery -Query "sum by (tool) (tool_call_duration_seconds_count)"
 $approvalWaitMetric = Invoke-PrometheusQuery -Query "sum(approval_wait_duration_seconds_count)"
+$serviceObservationMetric = Invoke-PrometheusQuery -Query "service_observation_value"
+$serviceObservationAbnormalMetric = Invoke-PrometheusQuery -Query "service_observation_abnormal"
+$releaseDeltaValueMetric = Invoke-PrometheusQuery -Query "release_comparison_delta_value"
+$releaseDeltaRatioMetric = Invoke-PrometheusQuery -Query "release_comparison_delta_ratio"
 
 Set-Content -LiteralPath (Join-Path $runDir "metric-incident-runs.json") -Value ($incidentRunsMetric | ConvertTo-Json -Depth 30) -Encoding UTF8
 Set-Content -LiteralPath (Join-Path $runDir "metric-rollback-requests.json") -Value ($rollbackMetric | ConvertTo-Json -Depth 30) -Encoding UTF8
@@ -370,6 +374,10 @@ Set-Content -LiteralPath (Join-Path $runDir "metric-recovery-verification.json")
 Set-Content -LiteralPath (Join-Path $runDir "metric-graph-node-duration.json") -Value ($graphNodeMetric | ConvertTo-Json -Depth 30) -Encoding UTF8
 Set-Content -LiteralPath (Join-Path $runDir "metric-tool-call-duration.json") -Value ($toolCallMetric | ConvertTo-Json -Depth 30) -Encoding UTF8
 Set-Content -LiteralPath (Join-Path $runDir "metric-approval-wait-count.json") -Value ($approvalWaitMetric | ConvertTo-Json -Depth 30) -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $runDir "metric-service-observation-value.json") -Value ($serviceObservationMetric | ConvertTo-Json -Depth 30) -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $runDir "metric-service-observation-abnormal.json") -Value ($serviceObservationAbnormalMetric | ConvertTo-Json -Depth 30) -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $runDir "metric-release-comparison-delta-value.json") -Value ($releaseDeltaValueMetric | ConvertTo-Json -Depth 30) -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $runDir "metric-release-comparison-delta-ratio.json") -Value ($releaseDeltaRatioMetric | ConvertTo-Json -Depth 30) -Encoding UTF8
 
 if ($UseMySQL -and $incidentIds.Count -gt 0) {
     $idClause = ($incidentIds | ForEach-Object { "'{0}'" -f $_ }) -join ", "
@@ -478,6 +486,38 @@ foreach ($bundle in $incidentBundle) {
     }
     $reportLines.Add("")
 
+    if ($report -and @($report.metrics).Count -gt 0) {
+        $reportLines.Add("指标快照：")
+        foreach ($metric in @($report.metrics)) {
+            $reportLines.Add('- [' + $metric.phase + '] ' + $metric.display_name + ' = ' + $metric.value + ' ' + $metric.unit + '（阈值=' + $metric.threshold + '，异常=' + $metric.abnormal + '，source=' + $metric.source_mode + '）')
+        }
+        $reportLines.Add("")
+    }
+
+    if ($report -and @($report.release_comparisons).Count -gt 0) {
+        $reportLines.Add("发布前后对比：")
+        foreach ($comparison in @($report.release_comparisons)) {
+            $reportLines.Add('- ' + $comparison.display_name + '：before=' + $comparison.before_value + ' ' + $comparison.unit + '，after=' + $comparison.after_value + ' ' + $comparison.unit + '，delta=' + $comparison.delta_value + ' ' + $comparison.unit + '，delta_ratio=' + $comparison.delta_ratio + '%')
+        }
+        $reportLines.Add("")
+    }
+
+    if ($report -and @($report.anomaly_summary).Count -gt 0) {
+        $reportLines.Add("异常描述：")
+        foreach ($item in @($report.anomaly_summary)) {
+            $reportLines.Add('- ' + $item)
+        }
+        $reportLines.Add("")
+    }
+
+    if ($report -and @($report.handling_suggestions).Count -gt 0) {
+        $reportLines.Add("处理建议：")
+        foreach ($item in @($report.handling_suggestions)) {
+            $reportLines.Add('- ' + $item)
+        }
+        $reportLines.Add("")
+    }
+
     if ($bundle.Events.Count -gt 0) {
         $reportLines.Add("时间线：")
         foreach ($event in $bundle.Events) {
@@ -540,6 +580,16 @@ foreach ($line in Format-NamedMetricResult -MetricResponse $toolCallMetric -Metr
     $reportLines.Add($line)
 }
 $reportLines.Add("")
+$reportLines.Add("服务指标样本数：")
+foreach ($line in Format-NamedMetricResult -MetricResponse $serviceObservationMetric -MetricLabel "metric") {
+    $reportLines.Add($line)
+}
+$reportLines.Add("")
+$reportLines.Add("发布前后差值样本数：")
+foreach ($line in Format-NamedMetricResult -MetricResponse $releaseDeltaValueMetric -MetricLabel "metric") {
+    $reportLines.Add($line)
+}
+$reportLines.Add("")
 $reportLines.Add("审批等待样本数：")
 foreach ($item in @($approvalWaitMetric.data.result)) {
     $reportLines.Add("- " + $item.value[1] + " 次")
@@ -555,7 +605,7 @@ $reportLines.Add("## 原始产物")
 $reportLines.Add("")
 $reportLines.Add('- 回放结果：`replay-result.json`')
 $reportLines.Add('- Incident API 原始响应：`incident-*.json`、`events-*.json`、`agent-runs-*.json` 和 `report-*.json`')
-$reportLines.Add('- Prometheus 指标快照：`metric-*.json`')
+$reportLines.Add('- Prometheus 指标快照：`metric-*.json`（包含 service observation 和 release delta）')
 if ($UseMySQL) {
     $reportLines.Add('- 数据库导出：`db-incidents.tsv`、`db-approvals.tsv`、`db-action-receipts.tsv`、`db-incident-events.tsv`、`db-agent-runs.tsv`、`db-evidence-items.tsv`')
 }

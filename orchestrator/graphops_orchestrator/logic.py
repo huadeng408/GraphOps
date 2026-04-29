@@ -116,6 +116,11 @@ def build_final_report(
     approval_status: str,
 ) -> FinalReport:
     primary_cause = hypotheses[0].cause if hypotheses else "Insufficient evidence to determine root cause."
+    anomaly_summary: list[str] = []
+    handling_suggestions: list[str] = []
+    metrics = []
+    release_comparisons = []
+    anomalies = []
 
     if proposed_action is None:
         if "inventory-service" in primary_cause.lower():
@@ -139,10 +144,27 @@ def build_final_report(
     else:
         verification = f"Not recovered: {verification_result.summary}"
 
+    if verification_result is not None:
+        metrics = list(verification_result.metrics)
+        release_comparisons = list(verification_result.release_comparisons)
+        anomalies = list(verification_result.anomalies)
+        anomaly_summary = [f"[{item.severity}] {item.description}" for item in anomalies]
+        seen_suggestions: set[str] = set()
+        for item in anomalies:
+            suggestion = item.handling_suggestion.strip()
+            if suggestion and suggestion not in seen_suggestions:
+                seen_suggestions.add(suggestion)
+                handling_suggestions.append(suggestion)
+
     return FinalReport(
         summary=f"GraphOps completed a diagnostic run for {service_name}.",
         root_cause=primary_cause,
         recommended_action=recommended_action,
         verification=verification,
+        anomaly_summary=anomaly_summary,
+        handling_suggestions=handling_suggestions,
+        metrics=metrics,
+        release_comparisons=release_comparisons,
+        anomalies=anomalies,
         generated_at=datetime.now(tz=UTC).isoformat(),
     )

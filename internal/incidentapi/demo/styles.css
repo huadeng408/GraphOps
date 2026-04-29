@@ -259,6 +259,7 @@ h1 {
 .viz-grid,
 .table-split,
 .trend-grid,
+.observability-grid,
 .snapshot-grid,
 .split-stage {
   display: grid;
@@ -310,6 +311,21 @@ h1 {
 
 .trend-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.observability-grid {
+  margin-top: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.observability-grid .snapshot-card:first-child {
+  grid-column: 1 / -1;
+}
+
+.observability-grid .snapshot-card h3 {
+  font-size: 1.02rem;
+  line-height: 1.35;
 }
 
 .viz-card,
@@ -599,6 +615,10 @@ select {
   overflow: auto;
 }
 
+.observability-grid .table-wrap {
+  max-height: 360px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -655,6 +675,52 @@ th {
   border: 1px solid rgba(18, 30, 48, 0.08);
 }
 
+.metric-table-row.abnormal td {
+  background: rgba(194, 65, 65, 0.04);
+}
+
+.badge.normal {
+  background: rgba(22, 131, 92, 0.14);
+  color: var(--ok);
+}
+
+.badge.abnormal {
+  background: rgba(194, 65, 65, 0.12);
+  color: var(--danger);
+}
+
+.insight-stack,
+.insight-list {
+  display: grid;
+  gap: 10px;
+}
+
+.insight-list {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.insight-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(18, 30, 48, 0.08);
+}
+
+.insight-card strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.insight-card small {
+  color: var(--muted);
+}
+
+.suggestion-block {
+  margin-top: 14px;
+}
+
 .empty-state {
   color: var(--muted);
 }
@@ -675,6 +741,7 @@ th {
   .timeline-layout,
   .agent-grid,
   .metrics-grid,
+  .observability-grid,
   .viz-grid,
   .table-split,
   .trend-grid,

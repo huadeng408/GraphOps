@@ -30,6 +30,37 @@ type SignalCheck struct {
 	Summary       string  `json:"summary"`
 }
 
+type MetricObservation struct {
+	Key         string  `json:"key"`
+	DisplayName string  `json:"display_name"`
+	Phase       string  `json:"phase"`
+	Value       float64 `json:"value"`
+	Unit        string  `json:"unit"`
+	Threshold   string  `json:"threshold,omitempty"`
+	Abnormal    bool    `json:"abnormal"`
+	SourceMode  string  `json:"source_mode,omitempty"`
+	Summary     string  `json:"summary,omitempty"`
+}
+
+type MetricComparison struct {
+	Key         string  `json:"key"`
+	DisplayName string  `json:"display_name"`
+	BeforeValue float64 `json:"before_value"`
+	AfterValue  float64 `json:"after_value"`
+	DeltaValue  float64 `json:"delta_value"`
+	DeltaRatio  float64 `json:"delta_ratio"`
+	Unit        string  `json:"unit"`
+	Summary     string  `json:"summary,omitempty"`
+}
+
+type AnomalyFinding struct {
+	MetricKey          string `json:"metric_key"`
+	Severity           string `json:"severity"`
+	Description        string `json:"description"`
+	HandlingSuggestion string `json:"handling_suggestion"`
+	SourceMode         string `json:"source_mode,omitempty"`
+}
+
 type QueryRequest struct {
 	IncidentID        string           `json:"incident_id"`
 	ServiceName       string           `json:"service_name"`
@@ -88,14 +119,17 @@ type VerifyRequest struct {
 }
 
 type VerificationResult struct {
-	Status        string        `json:"status"`
-	ErrorRate     float64       `json:"error_rate"`
-	P95LatencyMs  int           `json:"p95_latency_ms"`
-	WindowMinutes int           `json:"window_minutes"`
-	QueryRefs     []string      `json:"query_refs"`
-	SignalChecks  []SignalCheck `json:"signal_checks"`
-	DecisionBasis string        `json:"decision_basis"`
-	Summary       string        `json:"summary"`
+	Status             string              `json:"status"`
+	ErrorRate          float64             `json:"error_rate"`
+	P95LatencyMs       int                 `json:"p95_latency_ms"`
+	WindowMinutes      int                 `json:"window_minutes"`
+	QueryRefs          []string            `json:"query_refs"`
+	SignalChecks       []SignalCheck       `json:"signal_checks"`
+	Metrics            []MetricObservation `json:"metrics,omitempty"`
+	ReleaseComparisons []MetricComparison  `json:"release_comparisons,omitempty"`
+	Anomalies          []AnomalyFinding    `json:"anomalies,omitempty"`
+	DecisionBasis      string              `json:"decision_basis"`
+	Summary            string              `json:"summary"`
 }
 
 type ScenarioData struct {

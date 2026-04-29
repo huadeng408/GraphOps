@@ -58,7 +58,7 @@ $incidentStore = "memory"
 $receiptStore = "memory"
 if ($UseMySQL) {
     if (-not $env:MYSQL_DSN) {
-        $env:MYSQL_DSN = "graphops:graphops@tcp(127.0.0.1:3307)/graphops?parseTime=true"
+        $env:MYSQL_DSN = "graphops:graphops@tcp(127.0.0.1:3307)/graphops?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci"
     }
     & (Join-Path $PSScriptRoot "mysql-up.ps1")
     & (Join-Path $PSScriptRoot "mysql-migrate.ps1")

@@ -43,6 +43,9 @@ const elements = {
   incidentSummary: document.querySelector("#incident-summary"),
   incidentAction: document.querySelector("#incident-action"),
   incidentVerification: document.querySelector("#incident-verification"),
+  incidentMetricSnapshots: document.querySelector("#incident-metric-snapshots"),
+  releaseComparisons: document.querySelector("#release-comparisons"),
+  incidentAnomalies: document.querySelector("#incident-anomalies"),
   evidenceGroups: document.querySelector("#evidence-groups"),
   incidentReport: document.querySelector("#incident-report"),
   eventList: document.querySelector("#event-list"),
@@ -198,6 +201,9 @@ async function refreshIncidentBundle() {
   renderIncidentSummary(incident);
   renderActionPlan(incident);
   renderVerification(incident, report);
+  renderMetricSnapshots(incident, report);
+  renderReleaseComparisons(incident, report);
+  renderIncidentAnomalies(incident, report);
   renderEvidence(incident);
   renderReport(incident, report);
   renderEvents(events.items || []);
@@ -316,13 +322,13 @@ function renderIncidentSummary(incident) {
     <div class="summary-line"><strong>Playbook</strong> <span class="mono">${escapeHtml(incident.playbook_key || "-")}</span></div>
     <div class="summary-line"><strong>Release</strong> <span class="mono">${escapeHtml(context.release_version || "-")}</span></div>
     <div class="summary-line"><strong>Rollback Target</strong> <span class="mono">${escapeHtml(context.previous_version || "-")}</span></div>
-    <div class="summary-line"><strong>Parallel Evidence</strong> ${Array.isArray(analysis.evidence) ? analysis.evidence.length : 0} items</div>
+    <div class="summary-line"><strong>并行证据数</strong> ${Array.isArray(analysis.evidence) ? analysis.evidence.length : 0} 条</div>
   `;
 }
 
 function renderLatestRunSummary(incident, report, agentRuns) {
   if (!incident) {
-    elements.latestRunSummary.innerHTML = `<div class="empty-state">还没有保存的联调结果。</div>`;
+    elements.latestRunSummary.innerHTML = `<div class="empty-state">\u8fd8\u6ca1\u6709\u4fdd\u5b58\u7684\u8054\u8c03\u7ed3\u679c\u3002</div>`;
     return;
   }
 
@@ -335,19 +341,21 @@ function renderLatestRunSummary(incident, report, agentRuns) {
   elements.latestRunSummary.innerHTML = `
     <div class="latest-summary-grid">
       <div class="summary-line"><strong>Incident</strong><span class="mono">${escapeHtml(incident.id)}</span></div>
-      <div class="summary-line"><strong>Status</strong>${renderStatusBadge(incident.status)}</div>
-      <div class="summary-line"><strong>Approval</strong><span>${escapeHtml(approval.status || "not_reviewed")}</span></div>
+      <div class="summary-line"><strong>\u5f53\u524d\u72b6\u6001</strong>${renderStatusBadge(incident.status)}</div>
+      <div class="summary-line"><strong>\u5ba1\u6279\u72b6\u6001</strong><span>${escapeHtml(approval.status || "not_reviewed")}</span></div>
       <div class="summary-line"><strong>Playbook</strong><span class="mono">${escapeHtml(incident.playbook_key || "-")}</span></div>
-      <div class="summary-line"><strong>Agent Runs</strong><span>${escapeHtml(String(nodeCount))}</span></div>
-      <div class="summary-line"><strong>Root Cause</strong><span>${escapeHtml(rootCause)}</span></div>
-      <div><strong>Verification</strong><p>${escapeHtml(verification)}</p></div>
+      <div class="summary-line"><strong>Agent \u8fd0\u884c\u6570</strong><span>${escapeHtml(String(nodeCount))}</span></div>
+      <div class="summary-line"><strong>\u6839\u56e0\u7ed3\u8bba</strong><span>${escapeHtml(localizeDemoText(rootCause))}</span></div>
+      <div><strong>\u6062\u590d\u7ed3\u8bba</strong><p>${escapeHtml(localizeDemoText(verification))}</p></div>
     </div>
   `;
 }
 
+
+
 function renderReportHistory(items) {
   if (!items.length) {
-    elements.reportHistoryResults.innerHTML = `<div class="empty-state">还没有查询结果。</div>`;
+    elements.reportHistoryResults.innerHTML = `<div class="empty-state">\u8fd8\u6ca1\u6709\u67e5\u8be2\u7ed3\u679c\u3002</div>`;
     return;
   }
 
@@ -356,8 +364,8 @@ function renderReportHistory(items) {
       ${items
         .map((item) => {
           const report = item.report || {};
-          const summary = report.summary || item.alert_summary || "No report summary yet.";
-          const rootCause = report.root_cause || report.rootCause || "No root cause saved.";
+          const summary = report.summary || item.alert_summary || "\u6682\u65e0\u62a5\u544a\u6458\u8981\u3002";
+          const rootCause = report.root_cause || report.rootCause || "\u6682\u672a\u4fdd\u5b58\u6839\u56e0\u7ed3\u8bba\u3002";
           return `
             <article class="history-item">
               <div class="history-head">
@@ -367,11 +375,11 @@ function renderReportHistory(items) {
                 </div>
                 ${renderStatusBadge(item.status)}
               </div>
-              <div class="history-meta">Created: ${escapeHtml(item.created_at || "-")}</div>
-              <p>${escapeHtml(summary)}</p>
-              <p><strong>Root Cause</strong> ${escapeHtml(rootCause)}</p>
+              <div class="history-meta">\u521b\u5efa\u65f6\u95f4\uff1a${escapeHtml(item.created_at || "-")}</div>
+              <p>${escapeHtml(localizeDemoText(summary))}</p>
+              <p><strong>\u6839\u56e0\u7ed3\u8bba</strong> ${escapeHtml(localizeDemoText(rootCause))}</p>
               <div class="history-actions">
-                <button type="button" class="secondary-button history-load-button" data-incident-id="${escapeHtml(item.id)}">加载到主视图</button>
+                <button type="button" class="secondary-button history-load-button" data-incident-id="${escapeHtml(item.id)}">\u52a0\u8f7d\u5230\u4e3b\u89c6\u56fe</button>
               </div>
             </article>
           `;
@@ -390,15 +398,17 @@ function renderReportHistory(items) {
       persistLastIncidentId(incidentId);
       refreshIncidentBundle()
         .then(() => {
-          updateSimulationStatus(`已加载历史 incident：${incidentId}`);
+          updateSimulationStatus(`\u5df2\u52a0\u8f7d\u5386\u53f2 incident\uff1a${incidentId}`);
           scrollToTop();
         })
         .catch((error) => {
-          updateSimulationStatus(`加载历史 incident 失败：${error.message}`, true);
+          updateSimulationStatus(`\u52a0\u8f7d\u5386\u53f2 incident \u5931\u8d25\uff1a${error.message}`, true);
         });
     });
   });
 }
+
+
 
 function renderActionPlan(incident) {
   const action = incident.analysis?.proposed_action;
@@ -424,27 +434,164 @@ function renderActionPlan(incident) {
 function renderVerification(incident, report) {
   const receipt = report?.action_receipt || incident.report?.action_receipt || null;
   const verificationText = report?.verification || incident.report?.verification;
-  const verificationResult = state.runResponse?.verification_result;
+  const verificationResult =
+    state.runResponse?.incident_id === incident.id ? state.runResponse?.verification_result : null;
 
   if (!receipt && !verificationText && !verificationResult) {
-    elements.incidentVerification.innerHTML = `<div class="empty-state">等待回滚执行或恢复验证。</div>`;
+    elements.incidentVerification.innerHTML = `<div class="empty-state">\u7b49\u5f85\u56de\u6eda\u6267\u884c\u6216\u6062\u590d\u9a8c\u8bc1\u3002</div>`;
     return;
   }
 
   const status = receipt?.verification_status || verificationResult?.status || incident.status;
   elements.incidentVerification.innerHTML = `
-    <div class="summary-line"><strong>Verification Status</strong> ${renderStatusBadge(status)}</div>
-    <div class="summary-line"><strong>From Revision</strong> <span class="mono">${escapeHtml(receipt?.from_revision || "-")}</span></div>
-    <div class="summary-line"><strong>To Revision</strong> <span class="mono">${escapeHtml(receipt?.to_revision || "-")}</span></div>
-    <div class="summary-line"><strong>Executor</strong> ${escapeHtml(receipt?.executor || "-")}</div>
-    <p>${escapeHtml(verificationText || verificationResult?.summary || receipt?.status_detail || "验证结果待生成。")}</p>
+    <div class="summary-line"><strong>\u9a8c\u8bc1\u72b6\u6001</strong> ${renderStatusBadge(status)}</div>
+    <div class="summary-line"><strong>\u56de\u6eda\u524d\u7248\u672c</strong> <span class="mono">${escapeHtml(receipt?.from_revision || "-")}</span></div>
+    <div class="summary-line"><strong>\u56de\u6eda\u540e\u7248\u672c</strong> <span class="mono">${escapeHtml(receipt?.to_revision || "-")}</span></div>
+    <div class="summary-line"><strong>\u6267\u884c\u4eba</strong> ${escapeHtml(receipt?.executor || "-")}</div>
+    <p>${escapeHtml(localizeDemoText(verificationText || verificationResult?.summary || receipt?.status_detail || "\u9a8c\u8bc1\u7ed3\u679c\u5f85\u751f\u6210\u3002"))}</p>
   `;
 }
+
+
+
+function renderMetricSnapshots(incident, report) {
+  const telemetry = resolveIncidentTelemetry(incident, report);
+  if (!telemetry.metrics.length) {
+    elements.incidentMetricSnapshots.innerHTML = `<div class="empty-state">\u6682\u65e0\u7ed3\u6784\u5316\u6307\u6807\u5feb\u7167\u3002</div>`;
+    return;
+  }
+
+  const rows = telemetry.metrics
+    .map(
+      (item) => `
+        <tr class="${item.abnormal ? "metric-table-row abnormal" : "metric-table-row"}">
+          <td>${escapeHtml(item.display_name || item.key || "-")}</td>
+          <td>${escapeHtml(localizePhase(item.phase || "-"))}</td>
+          <td>${escapeHtml(formatMetricValue(item.value, item.unit))}</td>
+          <td>${escapeHtml(item.threshold || "-")}</td>
+          <td>${renderStatusBadge(item.abnormal ? "abnormal" : "normal")}</td>
+          <td>${escapeHtml(localizeSourceMode(item.source_mode || "simulated"))}</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  elements.incidentMetricSnapshots.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>\u6307\u6807</th>
+            <th>\u9636\u6bb5</th>
+            <th>\u6570\u503c</th>
+            <th>\u9608\u503c</th>
+            <th>\u72b6\u6001</th>
+            <th>\u6765\u6e90</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+
+
+function renderReleaseComparisons(incident, report) {
+  const telemetry = resolveIncidentTelemetry(incident, report);
+  if (!telemetry.releaseComparisons.length) {
+    elements.releaseComparisons.innerHTML = `<div class="empty-state">\u6682\u65e0\u53d1\u5e03\u524d\u540e\u5bf9\u6bd4\u6570\u636e\u3002</div>`;
+    return;
+  }
+
+  const rows = telemetry.releaseComparisons
+    .map(
+      (item) => `
+        <tr>
+          <td>${escapeHtml(item.display_name || item.key || "-")}</td>
+          <td>${escapeHtml(formatMetricValue(item.before_value, item.unit))}</td>
+          <td>${escapeHtml(formatMetricValue(item.after_value, item.unit))}</td>
+          <td>${escapeHtml(formatMetricDelta(item.delta_value, item.unit))}</td>
+          <td>${escapeHtml(formatPercent(item.delta_ratio))}</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  const notes = telemetry.releaseComparisons
+    .map((item) => `<li>${escapeHtml(localizeDemoText(item.summary || `${item.display_name || item.key} \u5728\u53d1\u5e03\u540e\u53d1\u751f\u660e\u663e\u53d8\u5316\u3002`))}</li>`)
+    .join("");
+
+  elements.releaseComparisons.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>\u6307\u6807</th>
+            <th>\u53d1\u5e03\u524d</th>
+            <th>\u53d1\u5e03\u540e</th>
+            <th>\u53d8\u5316\u503c</th>
+            <th>\u53d8\u5316\u6bd4\u4f8b</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <ul class="insight-list">${notes}</ul>
+  `;
+}
+
+
+
+function renderIncidentAnomalies(incident, report) {
+  const telemetry = resolveIncidentTelemetry(incident, report);
+  const anomalySummary = telemetry.anomalySummary.length
+    ? telemetry.anomalySummary
+    : telemetry.anomalies.map((item) => `[${item.severity}] ${item.description}`);
+  const handlingSuggestions = telemetry.handlingSuggestions.length
+    ? telemetry.handlingSuggestions
+    : telemetry.anomalies.map((item) => item.handling_suggestion).filter(Boolean);
+
+  if (!anomalySummary.length && !handlingSuggestions.length && !telemetry.anomalies.length) {
+    elements.incidentAnomalies.innerHTML = `<div class="empty-state">\u6682\u65e0\u5f02\u5e38\u6458\u8981\u6216\u5904\u7f6e\u5efa\u8bae\u3002</div>`;
+    return;
+  }
+
+  const anomalyCards = telemetry.anomalies.length
+    ? telemetry.anomalies
+        .map(
+          (item) => `
+            <article class="insight-card">
+              <strong>${escapeHtml(localizeSeverity(item.severity || "info"))}</strong>
+              <p>${escapeHtml(item.description || "-")}</p>
+              <small>${escapeHtml(localizeSourceMode(item.source_mode || "simulated"))}</small>
+            </article>
+          `
+        )
+        .join("")
+    : anomalySummary
+        .map((item) => `<article class="insight-card"><p>${escapeHtml(item)}</p></article>`)
+        .join("");
+
+  const suggestionItems = handlingSuggestions.length
+    ? handlingSuggestions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")
+    : `<li>\u6682\u65e0\u989d\u5916\u5efa\u8bae\u3002</li>`;
+
+  elements.incidentAnomalies.innerHTML = `
+    <div class="insight-stack">${anomalyCards}</div>
+    <div class="suggestion-block">
+      <strong>\u5904\u7406\u5efa\u8bae</strong>
+      <ul class="insight-list">${suggestionItems}</ul>
+    </div>
+  `;
+}
+
+
 
 function renderEvidence(incident) {
   const evidence = incident.analysis?.evidence || [];
   if (!evidence.length) {
-    elements.evidenceGroups.innerHTML = `<div class="empty-state">还没有 evidence。</div>`;
+    elements.evidenceGroups.innerHTML = `<div class="empty-state">\u8fd8\u6ca1\u6709\u8bc1\u636e\u6570\u636e\u3002</div>`;
     return;
   }
 
@@ -468,7 +615,7 @@ function renderEvidence(incident) {
                 (item) => `
                   <article class="evidence-item">
                     <strong class="mono">${escapeHtml(item.source_ref)}</strong>
-                    <p>${escapeHtml(item.summary)}</p>
+                    <p>${escapeHtml(localizeDemoText(item.summary))}</p>
                     <small>confidence: ${escapeHtml(String(item.confidence))}</small>
                   </article>
                 `
@@ -481,6 +628,8 @@ function renderEvidence(incident) {
     .join("");
 }
 
+
+
 function renderReport(incident, report) {
   const hypotheses = incident.analysis?.hypotheses || [];
   const reportBody = report || incident.report;
@@ -490,35 +639,56 @@ function renderReport(incident, report) {
           (item) => `
             <article class="evidence-item">
               <strong>${escapeHtml(item.hypothesis_id || "hypothesis")}</strong>
-              <p>${escapeHtml(item.cause)}</p>
+              <p>${escapeHtml(localizeDemoText(item.cause))}</p>
               <small>confidence: ${escapeHtml(String(item.confidence))}</small>
             </article>
           `
         )
         .join("")
-    : `<div class="empty-state">还没有 hypothesis。</div>`;
+    : `<div class="empty-state">\u8fd8\u6ca1\u6709\u5047\u8bbe\u7ed3\u679c\u3002</div>`;
 
   const reportHtml = reportBody
     ? `
       <article class="evidence-item">
-        <strong>Final Report</strong>
-        <p>${escapeHtml(reportBody.summary || "")}</p>
-        <p><strong>Root Cause</strong> ${escapeHtml(reportBody.root_cause || "-")}</p>
-        <p><strong>Recommended Action</strong> ${escapeHtml(reportBody.recommended_action || "-")}</p>
-        <p><strong>Verification</strong> ${escapeHtml(reportBody.verification || "-")}</p>
+        <strong>\u6700\u7ec8\u62a5\u544a</strong>
+        <p>${escapeHtml(localizeDemoText(reportBody.summary || ""))}</p>
+        <p><strong>\u6839\u56e0\u7ed3\u8bba</strong> ${escapeHtml(localizeDemoText(reportBody.root_cause || "-"))}</p>
+        <p><strong>\u5efa\u8bae\u5904\u7f6e</strong> ${escapeHtml(localizeDemoText(reportBody.recommended_action || "-"))}</p>
+        <p><strong>\u6062\u590d\u7ed3\u8bba</strong> ${escapeHtml(localizeDemoText(reportBody.verification || "-"))}</p>
       </article>
     `
-    : `<div class="empty-state">等待最终报告。</div>`;
+    : `<div class="empty-state">\u7b49\u5f85\u6700\u7ec8\u62a5\u544a\u751f\u6210\u3002</div>`;
+
+  const reportInsights = reportBody
+    ? `
+      ${
+        (reportBody.anomaly_summary || []).length
+          ? `<div class="evidence-item"><strong>\u5f02\u5e38\u6458\u8981</strong><ul class="insight-list">${reportBody.anomaly_summary
+              .map((item) => `<li>${escapeHtml(item)}</li>`)
+              .join("")}</ul></div>`
+          : ""
+      }
+      ${
+        (reportBody.handling_suggestions || []).length
+          ? `<div class="evidence-item"><strong>\u5904\u7406\u5efa\u8bae</strong><ul class="insight-list">${reportBody.handling_suggestions
+              .map((item) => `<li>${escapeHtml(item)}</li>`)
+              .join("")}</ul></div>`
+          : ""
+      }
+    `
+    : "";
 
   elements.incidentReport.innerHTML = `
     <div class="evidence-list">${hypothesisHtml}</div>
-    <div class="evidence-list" style="margin-top: 16px;">${reportHtml}</div>
+    <div class="evidence-list" style="margin-top: 16px;">${reportHtml}${reportInsights}</div>
   `;
 }
 
+
+
 function renderEvents(events) {
   if (!events.length) {
-    elements.eventList.innerHTML = `<li class="empty-state">还没有 event。</li>`;
+    elements.eventList.innerHTML = `<li class="empty-state">\u8fd8\u6ca1\u6709\u4e8b\u4ef6\u65f6\u95f4\u7ebf\u3002</li>`;
     return;
   }
 
@@ -535,9 +705,11 @@ function renderEvents(events) {
     .join("");
 }
 
+
+
 function renderAgentRuns(agentRuns) {
   if (!agentRuns.length) {
-    elements.agentRunRows.innerHTML = `<tr><td colspan="5" class="empty-state">还没有 agent run。</td></tr>`;
+    elements.agentRunRows.innerHTML = `<tr><td colspan="5" class="empty-state">\u8fd8\u6ca1\u6709 Agent \u5ba1\u8ba1\u8bb0\u5f55\u3002</td></tr>`;
     return;
   }
 
@@ -555,6 +727,8 @@ function renderAgentRuns(agentRuns) {
     )
     .join("");
 }
+
+
 
 function renderApprovalBar(incident) {
   const waiting = state.runResponse?.interrupt || incident.status === "waiting_for_approval";
@@ -982,6 +1156,128 @@ function renderStatusBadge(status = "unknown") {
   const cssClass = normalized.replace(/\s+/g, "_");
   return `<span class="badge ${escapeHtml(cssClass)}">${escapeHtml(normalized)}</span>`;
 }
+
+function resolveIncidentTelemetry(incident, report) {
+  const reportBody = report || incident.report || {};
+  const verificationResult =
+    state.runResponse?.incident_id === incident.id ? state.runResponse?.verification_result || null : null;
+  return {
+    metrics: reportBody.metrics || verificationResult?.metrics || [],
+    releaseComparisons: reportBody.release_comparisons || verificationResult?.release_comparisons || [],
+    anomalies: reportBody.anomalies || verificationResult?.anomalies || [],
+    anomalySummary: reportBody.anomaly_summary || [],
+    handlingSuggestions: reportBody.handling_suggestions || [],
+  };
+}
+
+function formatMetricValue(value, unit = "") {
+  if (!Number.isFinite(Number(value))) {
+    return "-";
+  }
+  const numeric = Number(value);
+  switch (unit) {
+    case "%":
+      return `${numeric.toFixed(1)}%`;
+    case "ms":
+      return `${numeric.toFixed(numeric >= 1000 ? 0 : 1)} ms`;
+    case "rpm":
+    case "messages":
+    case "count/min":
+      return `${formatNumber(Math.round(numeric))} ${unit}`;
+    default:
+      return `${formatNumber(numeric)}${unit ? ` ${unit}` : ""}`;
+  }
+}
+
+function formatMetricDelta(value, unit = "") {
+  if (!Number.isFinite(Number(value))) {
+    return "-";
+  }
+  const numeric = Number(value);
+  const prefix = numeric > 0 ? "+" : "";
+  switch (unit) {
+    case "%":
+      return `${prefix}${numeric.toFixed(1)}%`;
+    case "ms":
+      return `${prefix}${numeric.toFixed(numeric >= 1000 ? 0 : 1)} ms`;
+    case "rpm":
+    case "messages":
+    case "count/min":
+      return `${prefix}${formatNumber(Math.round(numeric))} ${unit}`;
+    default:
+      return `${prefix}${formatNumber(numeric)}${unit ? ` ${unit}` : ""}`;
+  }
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(Number(value))) {
+    return "-";
+  }
+  const numeric = Number(value);
+  const prefix = numeric > 0 ? "+" : "";
+  return `${prefix}${numeric.toFixed(1)}%`;
+}
+
+function localizePhase(phase) {
+  const map = {
+    before_release: "发布前",
+    alert_window: "告警窗口",
+    after_rollback: "回滚后",
+  };
+  return map[phase] || phase;
+}
+
+function localizeSourceMode(mode) {
+  const map = {
+    simulated: "\u6a21\u62df\u6570\u636e",
+    observed: "\u771f\u5b9e\u89c2\u6d4b",
+  };
+  return map[mode] || mode;
+}
+
+
+
+function localizeSeverity(severity) {
+  const map = {
+    critical: "\u4e25\u91cd",
+    high: "\u9ad8",
+    medium: "\u4e2d",
+    low: "\u4f4e",
+    info: "\u63d0\u793a",
+  };
+  return map[severity] || severity;
+}
+
+
+
+
+function localizeDemoText(value) {
+  const text = String(value ?? "");
+  const map = {
+    "GraphOps completed a diagnostic run for order-api.": "GraphOps \u5df2\u5b8c\u6210 order-api \u7684\u4e00\u6b21\u8bca\u65ad\u8fd0\u884c\u3002",
+    "The latest release introduced a configuration regression in order-api database connectivity.": "\u6700\u65b0\u4e00\u6b21\u53d1\u5e03\u5728 order-api \u7684\u6570\u636e\u5e93\u8fde\u63a5\u914d\u7f6e\u4e0a\u5f15\u5165\u4e86\u56de\u5f52\u3002",
+    "The primary fault is likely in inventory-service and is propagating to the caller.": "\u4e3b\u8981\u6545\u969c\u5927\u6982\u7387\u4f4d\u4e8e inventory-service\uff0c\u5e76\u5411\u8c03\u7528\u65b9\u4f20\u64ad\u3002",
+    "order-api is acting as the symptom carrier instead of the fault owner.": "order-api \u66f4\u50cf\u662f\u6545\u969c\u75c7\u72b6\u7684\u627f\u8f7d\u8005\uff0c\u800c\u4e0d\u662f\u6839\u6545\u969c\u6240\u5728\u3002",
+    "Do not rollback. Escalate to the downstream owner and continue manual investigation.": "\u4e0d\u8981\u56de\u6eda\uff0c\u5347\u7ea7\u7ed9\u4e0b\u6e38\u670d\u52a1\u8d1f\u8d23\u4eba\u5e76\u7ee7\u7eed\u4eba\u5de5\u6392\u67e5\u3002",
+    "Execute rollback for order-api.": "\u5bf9 order-api \u6267\u884c\u56de\u6eda\u3002",
+    "No rollback was executed. Diagnostic report only.": "\u672a\u6267\u884c\u6062\u590d\u52a8\u4f5c\uff0c\u672c\u6b21\u4ec5\u8f93\u51fa\u8bca\u65ad\u62a5\u544a\u3002",
+    "Not recovered: Order-api remains degraded while inventory-service and its storage path are still unhealthy.": "\u672a\u6062\u590d\uff1aorder-api \u4ecd\u5904\u4e8e\u964d\u7ea7\u72b6\u6001\uff0cinventory-service \u53ca\u5176\u5b58\u50a8\u94fe\u8def\u4ecd\u672a\u6062\u590d\u3002",
+    "Recovered: 5xx dropped to 0.3% and P95 to 118ms. 2 of 2 recovery signals passed after rollback, and all tracked user, service, and storage indicators returned under threshold.": "\u5df2\u6062\u590d\uff1a5xx \u964d\u5230 0.3%\uff0cP95 \u964d\u5230 118ms\u3002\u56de\u6eda\u540e 2/2 \u6062\u590d\u4fe1\u53f7\u901a\u8fc7\uff0c\u7528\u6237\u3001\u670d\u52a1\u548c\u5b58\u50a8\u4fa7\u6307\u6807\u5747\u5df2\u56de\u5230\u9608\u503c\u5185\u3002",
+    "No relevant order-api change in the last 2 hours.": "\u6700\u8fd1 2 \u5c0f\u65f6\u5185\u6ca1\u6709\u4e0e order-api \u76f8\u5173\u7684\u53ef\u7591\u53d8\u66f4\u3002",
+    "order-api errors are dominated by timeouts when calling inventory-service.": "order-api \u7684\u4e3b\u8981\u9519\u8bef\u6a21\u5f0f\u662f\u8c03\u7528 inventory-service \u65f6\u8d85\u65f6\u3002",
+    "The top error pattern is upstream timeout rather than local configuration failure.": "\u6700\u4e3b\u8981\u7684\u9519\u8bef\u6a21\u5f0f\u662f\u4e0a\u6e38\u8c03\u7528\u8d85\u65f6\uff0c\u800c\u4e0d\u662f\u672c\u5730\u914d\u7f6e\u5931\u8d25\u3002",
+    "inventory-service is degraded with database pool exhaustion; downstream propagation is likely.": "inventory-service \u56e0\u6570\u636e\u5e93\u8fde\u63a5\u6c60\u8017\u5c3d\u800c\u964d\u7ea7\uff0c\u6781\u6709\u53ef\u80fd\u5411\u4e0a\u6e38\u4f20\u64ad\u3002",
+    "inventory-service depends on a saturated database connection pool.": "inventory-service \u4f9d\u8d56\u7684\u6570\u636e\u5e93\u8fde\u63a5\u6c60\u5df2\u7ecf\u9971\u548c\u3002",
+    "order-api released 8 minutes before the alert with a configuration bundle update.": "\u544a\u8b66\u53d1\u751f\u524d 8 \u5206\u949f\uff0corder-api \u521a\u5b8c\u6210\u4e00\u6b21\u914d\u7f6e\u5305\u66f4\u65b0\u53d1\u5e03\u3002",
+    "Database DSN and pool settings changed in the same release window.": "\u540c\u4e00\u53d1\u5e03\u7a97\u53e3\u5185\u540c\u65f6\u4fee\u6539\u4e86\u6570\u636e\u5e93 DSN \u548c\u8fde\u63a5\u6c60\u914d\u7f6e\u3002",
+    "High-frequency errors show invalid connection string and database authentication failures.": "\u9ad8\u9891\u9519\u8bef\u663e\u793a\u8fde\u63a5\u4e32\u65e0\u6548\uff0c\u5e76\u4f34\u968f\u6570\u636e\u5e93\u8ba4\u8bc1\u5931\u8d25\u3002",
+    "The error spike starts immediately after the release and stays local to order-api.": "\u9519\u8bef\u6fc0\u589e\u7d27\u8ddf\u53d1\u5e03\u540e\u51fa\u73b0\uff0c\u4e14\u5f71\u54cd\u8303\u56f4\u4e3b\u8981\u5c40\u9650\u5728 order-api\u3002",
+    "No downstream error amplification detected on inventory-service.": "\u6ca1\u6709\u5728 inventory-service \u4e0a\u89c2\u5bdf\u5230\u4e0b\u6e38\u7ea7\u8054\u653e\u5927\u3002",
+    "payment-service remains healthy; the blast radius is currently limited to order-api.": "payment-service \u4fdd\u6301\u5065\u5eb7\uff0c\u5f53\u524d\u5f71\u54cd\u8303\u56f4\u4ec5\u9650\u4e8e order-api\u3002"
+  };
+  return map[text] || text;
+}
+
 
 function escapeHtml(value) {
   return String(value ?? "")

@@ -405,7 +405,8 @@ def test_graph_runner_inconclusive_release_scenario_stops_without_rollback() -> 
     assert result.interrupt is None
     assert result.proposed_action is None
     assert result.action_receipt is None
-    assert result.verification_result is None
+    assert result.verification_result is not None
+    assert result.verification_result.status == "not_recovered"
     assert result.final_report is not None
     assert "Do not rollback yet" in result.final_report.recommended_action
     assert result.policy_decision is not None
@@ -471,7 +472,8 @@ def test_graph_runner_downstream_dependency_generates_report_without_rollback() 
     assert result.interrupt is None
     assert result.proposed_action is None
     assert result.action_receipt is None
-    assert result.verification_result is None
+    assert result.verification_result is not None
+    assert result.verification_result.status == "not_recovered"
     assert result.final_report is not None
     assert result.triage_decision is not None
     assert result.triage_decision["incident_type"] == "downstream_dependency"

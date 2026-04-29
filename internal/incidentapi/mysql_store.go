@@ -60,13 +60,14 @@ func (s *MySQLStore) CreateIncident(req CreateIncidentRequest) (*Incident, error
 func (s *MySQLStore) GetIncident(id string) (*Incident, error) {
 	row := s.db.QueryRowContext(
 		context.Background(),
-		`SELECT id, service_name, severity, alert_summary, playbook_key, context_json, status, analysis_json, report_json, created_at, updated_at
+		`SELECT id, service_name, severity, alert_summary, COALESCE(playbook_key, scenario_key, '') AS playbook_key, context_json, status, analysis_json, report_json, created_at, updated_at
 		 FROM incidents
 		 WHERE id = ?`,
 		id,
 	)
 
 	var incident Incident
+	var playbookKey sql.NullString
 	var contextJSON sql.NullString
 	var analysisJSON sql.NullString
 	var reportJSON sql.NullString
@@ -76,7 +77,7 @@ func (s *MySQLStore) GetIncident(id string) (*Incident, error) {
 		&incident.ServiceName,
 		&incident.Severity,
 		&incident.AlertSummary,
-		&incident.PlaybookKey,
+		&playbookKey,
 		&contextJSON,
 		&incident.Status,
 		&analysisJSON,
@@ -88,6 +89,9 @@ func (s *MySQLStore) GetIncident(id string) (*Incident, error) {
 			return nil, errIncidentNotFound
 		}
 		return nil, err
+	}
+	if playbookKey.Valid {
+		incident.PlaybookKey = playbookKey.String
 	}
 
 	if contextJSON.Valid && contextJSON.String != "" {

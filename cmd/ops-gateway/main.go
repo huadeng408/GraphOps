@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
@@ -40,7 +41,7 @@ func mustBuildStore(storeType string, redisClient *redis.Client) (opsgateway.Gat
 	case "memory":
 		return opsgateway.NewStore(redisClient), func() {}
 	case "mysql":
-		dsn := os.Getenv("MYSQL_DSN")
+		dsn := normalizeMySQLDSN(os.Getenv("MYSQL_DSN"))
 		if dsn == "" {
 			log.Fatal("MYSQL_DSN is required when ACTION_RECEIPT_STORE=mysql")
 		}
@@ -58,6 +59,28 @@ func mustBuildStore(storeType string, redisClient *redis.Client) (opsgateway.Gat
 		log.Fatalf("unsupported ACTION_RECEIPT_STORE: %s", storeType)
 		return nil, func() {}
 	}
+}
+
+func normalizeMySQLDSN(dsn string) string {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		return ""
+	}
+	if !strings.Contains(dsn, "charset=") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&charset=utf8mb4"
+		} else {
+			dsn += "?charset=utf8mb4"
+		}
+	}
+	if !strings.Contains(dsn, "collation=") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&collation=utf8mb4_unicode_ci"
+		} else {
+			dsn += "?collation=utf8mb4_unicode_ci"
+		}
+	}
+	return dsn
 }
 
 func buildRedisClient() (*redis.Client, func()) {

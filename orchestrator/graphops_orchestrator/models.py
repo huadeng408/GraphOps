@@ -82,6 +82,37 @@ class SignalCheck(BaseModel):
     summary: str
 
 
+class MetricObservation(BaseModel):
+    key: str
+    display_name: str
+    phase: str
+    value: float
+    unit: str
+    threshold: str = ""
+    abnormal: bool = False
+    source_mode: str = "simulated"
+    summary: str = ""
+
+
+class MetricComparison(BaseModel):
+    key: str
+    display_name: str
+    before_value: float
+    after_value: float
+    delta_value: float
+    delta_ratio: float
+    unit: str
+    summary: str = ""
+
+
+class AnomalyFinding(BaseModel):
+    metric_key: str
+    severity: str
+    description: str
+    handling_suggestion: str
+    source_mode: str = "simulated"
+
+
 class VerificationResult(BaseModel):
     status: str
     error_rate: float
@@ -89,6 +120,9 @@ class VerificationResult(BaseModel):
     window_minutes: int
     query_refs: list[str] = Field(default_factory=list)
     signal_checks: list[SignalCheck] = Field(default_factory=list)
+    metrics: list[MetricObservation] = Field(default_factory=list)
+    release_comparisons: list[MetricComparison] = Field(default_factory=list)
+    anomalies: list[AnomalyFinding] = Field(default_factory=list)
     decision_basis: str
     summary: str
 
@@ -98,6 +132,11 @@ class FinalReport(BaseModel):
     root_cause: str
     recommended_action: str
     verification: str
+    anomaly_summary: list[str] = Field(default_factory=list)
+    handling_suggestions: list[str] = Field(default_factory=list)
+    metrics: list[MetricObservation] = Field(default_factory=list)
+    release_comparisons: list[MetricComparison] = Field(default_factory=list)
+    anomalies: list[AnomalyFinding] = Field(default_factory=list)
     action_receipt: ActionReceipt | None = None
     generated_at: str = ""
 

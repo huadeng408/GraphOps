@@ -114,13 +114,49 @@ type ActionReceipt struct {
 	VerificationStatus string    `json:"verification_status"`
 }
 
+type MetricObservation struct {
+	Key         string  `json:"key"`
+	DisplayName string  `json:"display_name"`
+	Phase       string  `json:"phase"`
+	Value       float64 `json:"value"`
+	Unit        string  `json:"unit"`
+	Threshold   string  `json:"threshold,omitempty"`
+	Abnormal    bool    `json:"abnormal"`
+	SourceMode  string  `json:"source_mode,omitempty"`
+	Summary     string  `json:"summary,omitempty"`
+}
+
+type MetricComparison struct {
+	Key         string  `json:"key"`
+	DisplayName string  `json:"display_name"`
+	BeforeValue float64 `json:"before_value"`
+	AfterValue  float64 `json:"after_value"`
+	DeltaValue  float64 `json:"delta_value"`
+	DeltaRatio  float64 `json:"delta_ratio"`
+	Unit        string  `json:"unit"`
+	Summary     string  `json:"summary,omitempty"`
+}
+
+type AnomalyFinding struct {
+	MetricKey          string `json:"metric_key"`
+	Severity           string `json:"severity"`
+	Description        string `json:"description"`
+	HandlingSuggestion string `json:"handling_suggestion"`
+	SourceMode         string `json:"source_mode,omitempty"`
+}
+
 type FinalReport struct {
-	Summary           string         `json:"summary"`
-	RootCause         string         `json:"root_cause"`
-	RecommendedAction string         `json:"recommended_action"`
-	Verification      string         `json:"verification"`
-	ActionReceipt     *ActionReceipt `json:"action_receipt,omitempty"`
-	GeneratedAt       time.Time      `json:"generated_at"`
+	Summary             string              `json:"summary"`
+	RootCause           string              `json:"root_cause"`
+	RecommendedAction   string              `json:"recommended_action"`
+	Verification        string              `json:"verification"`
+	AnomalySummary      []string            `json:"anomaly_summary,omitempty"`
+	HandlingSuggestions []string            `json:"handling_suggestions,omitempty"`
+	Metrics             []MetricObservation `json:"metrics,omitempty"`
+	ReleaseComparisons  []MetricComparison  `json:"release_comparisons,omitempty"`
+	Anomalies           []AnomalyFinding    `json:"anomalies,omitempty"`
+	ActionReceipt       *ActionReceipt      `json:"action_receipt,omitempty"`
+	GeneratedAt         time.Time           `json:"generated_at"`
 }
 
 type CreateIncidentRequest struct {

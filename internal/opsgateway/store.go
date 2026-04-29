@@ -129,8 +129,10 @@ func (s *Store) Verify(req VerifyRequest) (VerificationResult, error) {
 			}
 		}
 		recordVerificationStatus(data.VerificationAfter.Status)
+		recordVerificationSnapshot(req.ServiceName, data.VerificationAfter)
 		return data.VerificationAfter, nil
 	}
 	recordVerificationStatus(data.VerificationBefore.Status)
+	recordVerificationSnapshot(req.ServiceName, data.VerificationBefore)
 	return data.VerificationBefore, nil
 }
