@@ -1,5 +1,8 @@
+import asyncio
+
 from graphops_orchestrator.logic import plan_diagnosis
 from graphops_orchestrator.models import Evidence
+from graphops_orchestrator.report_skill import RuleBasedReportSkill
 
 
 def test_plan_diagnosis_recommends_rollback_for_release_regression() -> None:
@@ -144,3 +147,32 @@ def test_plan_diagnosis_identifies_downstream_dependency_without_rollback() -> N
 
     assert hypotheses[0].cause.startswith("The primary fault is likely in inventory-service")
     assert action is None
+
+
+def test_rule_based_report_skill_generates_downstream_recommendation() -> None:
+    skill = RuleBasedReportSkill()
+
+    report = asyncio.run(
+        skill.generate(
+            {
+                "service_name": "order-api",
+                "hypotheses": [
+                    {
+                        "hypothesis_id": "hyp-1",
+                        "cause": "The primary fault is likely in inventory-service and is propagating to the caller.",
+                        "support_evidence_ids": ["log-1", "dep-1"],
+                        "confidence": 0.9,
+                    }
+                ],
+                "proposed_action": None,
+                "verification_result": None,
+                "approval_status": "",
+            }
+        )
+    )
+
+    assert report.root_cause.startswith("The primary fault is likely in inventory-service")
+    assert report.recommended_action == (
+        "Do not rollback. Escalate to the downstream owner and continue manual investigation."
+    )
+    assert report.generated_at

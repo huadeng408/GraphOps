@@ -17,19 +17,18 @@ from graphops_orchestrator.agent_schemas import (
     EvidenceAgentResult,
     PlannerDecision,
     PolicyDecision,
-    ReportDecision,
     TriageDecision,
 )
-from graphops_orchestrator.logic import build_evidence, build_final_report, plan_diagnosis
-from graphops_orchestrator.models import ActionPlan, Evidence, FinalReport, Hypothesis, VerificationResult
+from graphops_orchestrator.logic import build_evidence, plan_diagnosis
+from graphops_orchestrator.models import ActionPlan, Evidence, FinalReport
 from graphops_orchestrator.prompts import (
     critic_prompt,
     evidence_prompt,
     planner_prompt,
     policy_prompt,
-    report_prompt,
     triage_prompt,
 )
+from graphops_orchestrator.report_skill import LLMReportSkill, RuleBasedReportSkill
 from graphops_orchestrator.telemetry import llm_calls_total, llm_duration_seconds, measure_span
 
 PARALLEL_AGENT_NAMES = frozenset({"change_agent", "log_agent", "dependency_agent"})
@@ -63,10 +62,6 @@ class BaseReasoner(ABC):
 
     @abstractmethod
     async def policy(self, payload: dict[str, Any]) -> PolicyDecision:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def report(self, payload: dict[str, Any]) -> FinalReport:
         raise NotImplementedError
 
     def model_name_for_agent(self, agent_name: str) -> str:
@@ -193,28 +188,6 @@ class RuleBasedReasoner(BaseReasoner):
                 reason="Rollback is treated as a risky write action and must carry human approval when confidence is high enough to act.",
             )
         return PolicyDecision(decision="deny", reason="Unsupported action type in rule-based policy.")
-
-    async def report(self, payload: dict[str, Any]) -> FinalReport:
-        hypotheses = [Hypothesis.model_validate(item) for item in payload.get("hypotheses", [])]
-        proposed_action = (
-            ActionPlan.model_validate(payload["proposed_action"])
-            if payload.get("proposed_action")
-            else None
-        )
-        verification = (
-            VerificationResult.model_validate(payload["verification_result"])
-            if payload.get("verification_result")
-            else None
-        )
-        report = build_final_report(
-            service_name=payload["service_name"],
-            hypotheses=hypotheses,
-            proposed_action=proposed_action,
-            verification_result=verification,
-            approval_status=payload.get("approval_status", ""),
-        )
-        return report.model_copy(update={"generated_at": datetime.now(tz=UTC).isoformat()})
-
 
 class OllamaReasoner(BaseReasoner):
     provider = "ollama"
@@ -361,19 +334,16 @@ class OllamaReasoner(BaseReasoner):
     async def policy(self, payload: dict[str, Any]) -> PolicyDecision:
         return await self._invoke_structured(policy_prompt(payload), PolicyDecision, agent_name="policy_agent")
 
-    async def report(self, payload: dict[str, Any]) -> FinalReport:
-        report = await self._invoke_structured(report_prompt(payload), ReportDecision, agent_name="report_agent")
-        return FinalReport(
-            summary=report.summary,
-            root_cause=report.root_cause,
-            recommended_action=report.recommended_action,
-            verification=report.verification,
-            generated_at=datetime.now(tz=UTC).isoformat(),
-        )
-
-
 def build_reasoner_from_env() -> BaseReasoner:
     provider = os.getenv("REASONER_PROVIDER", "ollama").lower()
     if provider == "rules":
         return RuleBasedReasoner()
     return OllamaReasoner()
+
+
+def build_report_skill(reasoner: BaseReasoner):
+    if isinstance(reasoner, RuleBasedReasoner):
+        return RuleBasedReportSkill()
+    if isinstance(reasoner, OllamaReasoner):
+        return LLMReportSkill(reasoner._invoke_structured)
+    raise TypeError(f"unsupported reasoner type for report skill: {type(reasoner).__name__}")

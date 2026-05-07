@@ -9,7 +9,7 @@ from langgraph.types import Command, interrupt
 from pydantic import BaseModel
 
 from graphops_orchestrator.clients import IncidentAPIClient, OpsGatewayClient
-from graphops_orchestrator.llm import BaseReasoner, build_reasoner_from_env
+from graphops_orchestrator.llm import BaseReasoner, build_reasoner_from_env, build_report_skill
 from graphops_orchestrator.logic import build_evidence, plan_diagnosis
 from graphops_orchestrator.models import (
     ActionPlan,
@@ -21,6 +21,7 @@ from graphops_orchestrator.models import (
     VerificationResult,
 )
 from graphops_orchestrator.prompts import PROMPT_VERSIONS
+from graphops_orchestrator.report_skill import BaseReportSkill
 from graphops_orchestrator.telemetry import (
     audit_write_failures_total,
     approval_wait_duration_seconds,
@@ -68,6 +69,7 @@ class GraphRunner:
         ops_client: Any | None = None,
         checkpointer: Any | None = None,
         reasoner: BaseReasoner | None = None,
+        report_skill: BaseReportSkill | None = None,
         runtime_coordinator: Any | None = None,
     ) -> None:
         if incident_client is None:
@@ -82,6 +84,7 @@ class GraphRunner:
         self.incident_client = incident_client
         self.ops_client = ops_client
         self.reasoner = reasoner or build_reasoner_from_env()
+        self.report_skill = report_skill or build_report_skill(self.reasoner)
         self.runtime_coordinator = runtime_coordinator
         self.graph = self._build_graph(checkpointer or MemorySaver())
 
@@ -624,7 +627,7 @@ class GraphRunner:
                 node_name="report_agent",
                 prompt_version=PROMPT_VERSIONS["report_agent"],
                 input_payload=payload,
-                fn=lambda: self.reasoner.report(payload),
+                fn=lambda: self.report_skill.generate(payload),
             )
             if state.get("verification_result"):
                 verification_result = VerificationResult.model_validate(state["verification_result"])

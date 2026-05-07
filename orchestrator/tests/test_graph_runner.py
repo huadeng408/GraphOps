@@ -15,6 +15,7 @@ from graphops_orchestrator.models import (
     VerificationPolicy,
     VerificationResult,
 )
+from graphops_orchestrator.report_skill import BaseReportSkill
 
 
 def incident_context() -> IncidentContext:
@@ -254,6 +255,21 @@ class RoutedRuleReasoner(RuleBasedReasoner):
         return "qwen3:4b"
 
 
+class StubReportSkill(BaseReportSkill):
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def generate(self, payload: dict) -> FinalReport:
+        self.calls.append(payload)
+        return FinalReport(
+            summary="Stub summary",
+            root_cause="Stub root cause",
+            recommended_action="Stub recommended action",
+            verification="Stub verification",
+            generated_at="2026-04-30T00:00:00Z",
+        )
+
+
 def recovered_result() -> VerificationResult:
     return VerificationResult(
         status="recovered",
@@ -482,3 +498,58 @@ def test_graph_runner_downstream_dependency_generates_report_without_rollback() 
         "Do not rollback. Escalate to the downstream owner and continue manual investigation."
     )
     assert ops_client.rollback_calls == []
+
+
+def test_graph_runner_uses_injected_report_skill() -> None:
+    incident = Incident(
+        id="inc-report-skill",
+        service_name="order-api",
+        severity="P2",
+        alert_summary="5xx spike after deploy",
+        playbook_key="release_config_regression",
+        context=incident_context(),
+        status="created",
+    )
+    incident_client = FakeIncidentClient(incident)
+    ops_client = FakeOpsClient(
+        change_items=[
+            ToolItem(
+                source_ref="deploy/order-api",
+                summary="order-api was deployed in the last hour.",
+                confidence=0.7,
+            )
+        ],
+        log_items=[
+            ToolItem(
+                source_ref="logs/order-api",
+                summary="Error volume increased but no database or configuration signatures were confirmed.",
+                confidence=0.6,
+            )
+        ],
+        dependency_items=[
+            ToolItem(
+                source_ref="dep/order-api->inventory-service",
+                summary="Dependency health is inconclusive for the incident window.",
+                confidence=0.5,
+            )
+        ],
+        verify_before=unrecovered_result(),
+        verify_after=recovered_result(),
+    )
+    report_skill = StubReportSkill()
+    runner = GraphRunner(
+        incident_client=incident_client,
+        ops_client=ops_client,
+        reasoner=RuleBasedReasoner(),
+        report_skill=report_skill,
+        checkpointer=MemorySaver(),
+    )
+
+    result = asyncio.run(runner.run(incident.id))
+
+    assert result.final_report is not None
+    assert result.final_report.summary == "Stub summary"
+    assert incident_client.report_payload is not None
+    assert incident_client.report_payload.summary == "Stub summary"
+    assert len(report_skill.calls) == 1
+    assert report_skill.calls[0]["service_name"] == "order-api"
